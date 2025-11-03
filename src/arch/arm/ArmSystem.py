@@ -124,6 +124,7 @@ class ArmExtension(ScopedEnum):
         "TME",
         "FEAT_MPAM",
     ]
+    
 
 
 class ArmRelease(SimObject):
