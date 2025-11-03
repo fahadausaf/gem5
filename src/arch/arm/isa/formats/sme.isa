@@ -36,6 +36,12 @@
 output header {{
 namespace Aarch64
 {
+    //// --- Feature predicate for FEAT_SME_F8F16
+    //static inline bool hasSME_F8F16()
+    //{
+    //    return release->has(ArmExtension::FEAT_SME_F8F16);
+    //}
+    
     StaticInstPtr decodeSmeMgmt(ExtMachInst);
     StaticInstPtr decodeSmeInst(ExtMachInst);
 
@@ -43,6 +49,7 @@ namespace Aarch64
             StaticInstPtr decodeSmeOpFp32(ExtMachInst);
             StaticInstPtr decodeSmeOpBf16(ExtMachInst);
             StaticInstPtr decodeSmeOpFp16(ExtMachInst);
+            StaticInstPtr decodeSmeOpF8(ExtMachInst);
             StaticInstPtr decodeSmeOpInt8(ExtMachInst);
 
         StaticInstPtr decodeSmeOp64(ExtMachInst);
@@ -156,6 +163,14 @@ namespace Aarch64
                         return decodeSmeOpFp32(machInst);
                     }
                 }
+
+                // --- FP8 family (widening to FP16; 2-way uses op3 == 1) ---
+                if (op2 == 1) {
+                    // Current fmopa (F8 -> F16, widening, 2-way) matches op3 == 1
+                    if (op3 == 1) {
+                        return decodeSmeOpF8(machInst);
+                    }
+                }
             }
 
             if (op1 == 1) {
@@ -234,6 +249,35 @@ namespace Aarch64
 
         return new Unknown64(machInst);
     }
+
+StaticInstPtr
+decodeSmeOpF8(ExtMachInst machInst)
+{
+    // NOTE:
+    // This helper is only entered when the *top-level A64 mask* has already
+    // matched the SME FP8/FMOPA opcode family (widening, 2-way) and the
+    // FEAT guards allow it. Keep checks minimal here to avoid over-matching.
+
+    // --- Extract fields used by our variant ---
+    const uint32_t S    = (uint32_t)bits(machInst, 4, 4);      // FMOPA vs FMOPS selector
+    const RegIndex Zm   = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+    const RegIndex Zn   = (RegIndex)(uint32_t)bits(machInst,  9,  5);
+    const RegIndex Pn   = (RegIndex)(uint32_t)bits(machInst, 12, 10);
+    const RegIndex Pm   = (RegIndex)(uint32_t)bits(machInst, 15, 13);
+    const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst,  1,  0); // ZA.h half-tile index
+
+
+    // For now we only care about FMOPA (S == 0). FMOPS would be S == 1.
+    if (S == 0) {
+        // FP8 -> FP16, 2-way widening accumulate into ZA.h
+        // (The “2-way” and FP8/FP16 shape are enforced by the caller’s mask.)
+        return new SmeFmopaWideningF8<unsigned char, unsigned short>(machInst, ZAda, Zn, Pn, Pm, Zm);
+    }
+
+    return new Unknown64(machInst);
+}
+
+
 
     StaticInstPtr
     decodeSmeOpFp16(ExtMachInst machInst)
