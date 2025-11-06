@@ -35,11 +35,14 @@
 
 // @file Definition of SME instructions.
 
+
 let {{
 
     header_output = ""
     decoder_output = ""
     exec_output = ""
+
+    header_output += "#include \"base/trace.hh\"\\n";
 
     def smeAddInst(name, Name, opClass, types, op):
         global header_output, decoder_output, exec_output
@@ -617,38 +620,41 @@ let {{
               ['uint16_t'], ['uint32_t'], wideningFmopxCode % "1")
 
     
-    # FMOPA (widening, 2-way, FP8 to FP16)
+    # FMOPA (widening, 2-way, FP8 -> FP16)
+    # - Per-BYTE predication (p?.b)
+    # - Two 8-bit lanes feed one ZA.h half (tile[j][i])
     wideningFmopxF8Code = r'''
         auto tile = getTile<TPDElem>(ZA, imm);
         FPSCR fpscr = (FPSCR) Fpscr;
 
-        // SMOKE TEST: make a tiny valid FP16 from an 8-bit value without using fplib.
-        // Encoding: +/- (b / 256.0)  -> an FP16 subnormal-ish magnitude.
-        // This avoids any float->fp16 converter so we sidestep the undefined symbol.
+        // Trace once per execute so we can spot this in --debug-flags=Exec
+        DPRINTF(Arm, "SmeFmopaWideningF8: ZA.h slice=%%u, eCount=%%d (fp8->fp16, 2-way)\n",
+                (unsigned)imm, (int)eCount);
+
+        // Tiny FP8->FP16 "bit-ish" converter for smoke (keeps your original idea)
         auto fp8_to_fp16_bits = [](uint8_t b) -> uint16_t {
             if (b == 0) return 0;
-            // Put 'b' into mantissa bits, exponent=0 (subnormal), sign=0
-            // FP16: [s(1)] [exp(5)] [mant(10)]
-            uint16_t mant = static_cast<uint16_t>(b) << 2; // use top 8 -> 10 mant bits
-            return mant; // exp=0, sign=0
+            uint16_t mant = static_cast<uint16_t>(b) << 2; // put 8 bits into 10 mant bits
+            return mant; // subnormal, sign=0, exp=0
         };
-
         auto mk_fp16 = [&](uint8_t b) -> TPDElem {
             return static_cast<TPDElem>(fp8_to_fp16_bits(b));
         };
 
         for (int j = 0; j < eCount; ++j) {
+            // NOTE: Using half-word predicate (ZA.h row) until p?.b is exposed
             if (!GpOp1_xd[j]) continue;
 
             for (int i = 0; i < eCount; ++i) {
+                // NOTE: Using half-word predicate (ZA.h col) until p?.b is exposed
                 if (!GpOp2_xd[i]) continue;
 
                 TPDElem acc = tile[j][i];
 
-                // 2-way: two 8-bit lanes per pair
+                // Two 8-bit lanes per ZA.h half: bytes packed in AA64FpOp?_xd[*]
                 for (int k = 0; k < 2; ++k) {
-                    uint8_t s1 = (AA64FpOp1_xd[j] >> (8 * k)) & 0xFF;
-                    uint8_t s2 = (AA64FpOp2_xd[i] >> (8 * k)) & 0xFF;
+                    uint8_t s1 = (AA64FpOp1_xd[j] >> (8 * k)) & 0xFF; // from Zn.b
+                    uint8_t s2 = (AA64FpOp2_xd[i] >> (8 * k)) & 0xFF; // from Zm.b
 
                     TPDElem v1 = mk_fp16(s1);
                     TPDElem v2 = mk_fp16(s2);
@@ -656,7 +662,6 @@ let {{
             #if %s
                     v2 = fplibNeg(v2);
             #endif
-
                     TPDElem prod = fplibMul(v1, v2, fpscr);
                     acc = fplibAdd(acc, prod, fpscr);
                 }
@@ -665,10 +670,10 @@ let {{
             }
         }
     '''
-
     smeFPOPInst("fmopa", "FmopaWideningF8", "MatrixOPOp",
-            ["uint8_t"], ["uint16_t"],
-            wideningFmopxF8Code % "0")
+                ["uint8_t"], ["uint16_t"],
+                wideningFmopxF8Code % "0")
+
 
 
 

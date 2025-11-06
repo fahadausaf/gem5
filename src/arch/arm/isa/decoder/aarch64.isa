@@ -41,15 +41,4 @@
 // --------------------------
 //
 
-
-//// TEMP: exact match for fmopa za0.h, p0/m, p1/m, z0.b, z1.b
-//0xXXXXXXXX : SmeFmopaWideningF8 if (hasSME_F8F16());
-
-//// FMOPA (widening, 2-way) FP8->FP16 : ZA.h, Pn/m, Pm/m, Zn.b, Zm.b
-//0b10000000101000000000000000001000 & 0b11111111111000000000000000011110
-//    : decodeSmeOpF8() if (hasSME_F8F16());
-
-
-
-
 Aarch64::aarch64();
