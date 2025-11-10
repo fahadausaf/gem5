@@ -627,16 +627,19 @@ let {{
         auto tile = getTile<TPDElem>(ZA, imm);
         FPSCR fpscr = (FPSCR) Fpscr;
 
-        // Trace once per execute so we can spot this in --debug-flags=Exec
+        // Trace once per execute so we can spot this in --debug-flags=Arm
         DPRINTF(Arm, "SmeFmopaWideningF8: ZA.h slice=%%u, eCount=%%d (fp8->fp16, 2-way)\n",
                 (unsigned)imm, (int)eCount);
 
-        // Tiny FP8->FP16 "bit-ish" converter for smoke (keeps your original idea)
+        // Map 0..255 -> normal FP16 in ~[1.0, ~2.0)
+        // sign = 0, exponent = 15 (bias 15), mantissa = top 10 bits from the 8-bit value
         auto fp8_to_fp16_bits = [](uint8_t b) -> uint16_t {
-            if (b == 0) return 0;
-            uint16_t mant = static_cast<uint16_t>(b) << 2; // put 8 bits into 10 mant bits
-            return mant; // subnormal, sign=0, exp=0
+            if (b == 0) return 0;                 // preserve zero
+            uint16_t mant = static_cast<uint16_t>(b & 0xFF) << 2; // 10-bit mantissa
+            uint16_t exp  = 15;                   // normal exponent (not subnormal)
+            return static_cast<uint16_t>((exp << 10) | mant);
         };
+
         auto mk_fp16 = [&](uint8_t b) -> TPDElem {
             return static_cast<TPDElem>(fp8_to_fp16_bits(b));
         };
@@ -667,12 +670,18 @@ let {{
                 }
 
                 tile[j][i] = acc;
+
+                // Light verification: dump a couple of cells so we see accumulation
+                if (j < 2 && i < 2) {
+                    DPRINTF(Arm, "ZA.h[%%d,%%d] = 0x%%04x\n", j, i, (unsigned)acc);
+                }
             }
         }
     '''
     smeFPOPInst("fmopa", "FmopaWideningF8", "MatrixOPOp",
                 ["uint8_t"], ["uint16_t"],
                 wideningFmopxF8Code % "0")
+
 
 
 
