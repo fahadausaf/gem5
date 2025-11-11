@@ -117,6 +117,7 @@ class ArmExtension(ScopedEnum):
         # Armv9.2
         "FEAT_SME",  # Optional in Armv9.2
         "FEAT_SME_F8F16",
+        "FEAT_SME_F8F32",
         # Others
         "SECURITY",
         "LPAE",
@@ -222,6 +223,7 @@ class ArmDefaultRelease(Armv8):
         # Armv9.2
         "FEAT_SME",
         "FEAT_SME_F8F16",
+        "FEAT_SME_F8F32",
     ]
 
 

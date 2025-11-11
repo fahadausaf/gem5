@@ -42,7 +42,7 @@ let {{
     decoder_output = ""
     exec_output = ""
 
-    header_output += "#include \"base/trace.hh\"\\n";
+    header_output += "#include \"base/trace.hh\"\n";
 
     def smeAddInst(name, Name, opClass, types, op):
         global header_output, decoder_output, exec_output
@@ -683,6 +683,64 @@ let {{
                 wideningFmopxF8Code % "0")
 
 
+    wideningFmopx4WayF8Code = r'''
+        auto tile = getTile<TPDElem>(ZA, imm);
+        FPSCR fpscr = (FPSCR) Fpscr;
+
+        // Trace once per execute so we can spot this with --debug-flags=Arm
+        DPRINTF(Arm, "SmeFmopaWidening4WayF8: ZA.s slice=%u, eCount=%d (fp8->fp32, 4-way)\n",
+                (unsigned)imm, (int)eCount);
+
+        // Simple FP8 (byte) -> FP32 bits mapping stub:
+        //   sign = 0, exponent = 127 (bias), mantissa places the 8 FP8 bits high in 23-bit field.
+        auto fp8_to_fp32_bits = [](uint8_t b) -> uint32_t {
+            if (b == 0) return 0u; // preserve zero
+            uint32_t mant = static_cast<uint32_t>(b & 0xFFu) << 15; // 8 bits into high mantissa
+            uint32_t exp  = 127u;                                   // normal exponent
+            return (exp << 23) | mant;
+        };
+
+        auto mk_fp32 = [&](uint8_t b) -> TPDElem {
+            return static_cast<TPDElem>(fp8_to_fp32_bits(b));
+        };
+
+        for (int j = 0; j < eCount; ++j) {
+            // Row gate (until per-byte p?.b exposure)
+            if (!GpOp1_xd[j]) continue;
+
+            for (int i = 0; i < eCount; ++i) {
+                // Col gate (until per-byte p?.b exposure)
+                if (!GpOp2_xd[i]) continue;
+
+                TPDElem acc = tile[j][i];
+
+                // 4-way dot product: 4 bytes from Zn.b and Zm.b form one ZA.s accumulation
+                for (int k = 0; k < 4; ++k) {
+                    uint8_t s1 = (AA64FpOp1_xd[j] >> (8 * k)) & 0xFF; // Zn.b
+                    uint8_t s2 = (AA64FpOp2_xd[i] >> (8 * k)) & 0xFF; // Zm.b
+
+                    TPDElem v1 = mk_fp32(s1);
+                    TPDElem v2 = mk_fp32(s2);
+
+            #if 0
+                    v2 = fplibNeg(v2);
+            #endif
+                    TPDElem prod = fplibMul(v1, v2, fpscr);
+                    acc = fplibAdd(acc, prod, fpscr);
+                }
+
+                tile[j][i] = acc;
+
+                // Light verification
+                if (j < 2 && i < 2) {
+                    DPRINTF(Arm, "ZA.s[%d,%d] = 0x%08x\n", j, i, (unsigned)acc);
+                }
+            }
+        }
+    ''';
+
+    smeFPOPInst("fmopa", "FmopaWidening4WayF8F32", "MatrixOPOp",
+            ["uint8_t"], ["uint32_t"], wideningFmopx4WayF8Code)
 
 
 
