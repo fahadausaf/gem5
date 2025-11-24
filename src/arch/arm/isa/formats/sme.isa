@@ -51,6 +51,7 @@ namespace Aarch64
             StaticInstPtr decodeSmeOpFp16(ExtMachInst);
             StaticInstPtr decodeSmeOpF8(ExtMachInst);
             StaticInstPtr decodeSmeOpInt8(ExtMachInst);
+            StaticInstPtr decodeSmeTmop(ExtMachInst);
 
         StaticInstPtr decodeSmeOp64(ExtMachInst);
             StaticInstPtr decodeSmeOpFp64(ExtMachInst);
@@ -149,6 +150,59 @@ namespace Aarch64
     }
 
 
+    /// FTMOPA (non-widening) matcher for .H (half-precision)
+    static inline bool
+    isFtmopaNonWideningF16(uint32_t insn)
+    {
+        // Operand fields in the FTMOPA .H encoding:
+        //
+        //   Zm       : bits 20..16
+        //   Zk / K   : bits 12..10
+        //   Zn group : bits  9..6   (base of {Zn1, Zn2})
+        //   i2       : bits  5..4   (control segment index)
+        //   ZAda     : bit   0      (ZA0..ZA1 for .H)
+        //
+        constexpr uint32_t ftmopa_h_operand_mask =
+              (0x1Fu << 16)   // Zm
+            | (0x7u  << 10)   // Zk / K
+            | (0xFu  <<  6)   // Zn group
+            | (0x3u  <<  4)   // index (i2)
+            | (0x1u  <<  0);  // ZAda (.H uses only bit 0)
+
+
+        constexpr uint32_t ftmopa_h_base_encoding = 0x81A12018u;
+
+        constexpr uint32_t ftmopa_h_opcode_key =
+            ftmopa_h_base_encoding & ~ftmopa_h_operand_mask;
+
+        // Match: mask out operand bits from 'insn' and compare only the
+        // fixed opcode pattern against the key.
+        return (insn & ~ftmopa_h_operand_mask) == ftmopa_h_opcode_key;
+    }
+
+    /// FTMOPA (non-widening) matcher for .S (single-precision)
+    static inline bool
+    isFtmopaNonWideningF32(uint32_t insn)
+    {
+        // Operand fields as per FTMOPA .S encoding in the ARM ARM.
+        constexpr uint32_t ftmopa_s_operand_mask =
+            (0x1Fu << 16)   // Zm
+        | (0x7u  << 10)   // Zk/K
+        | (0xFu  <<  6)   // Zn group
+        | (0x3u  <<  4)   // index (i2)
+        | (0x3u  <<  0);  // ZAda (.S uses bits [1:0])
+
+        constexpr uint32_t ftmopa_s_base_encoding = 0x80A02008u;
+        // ^ This is 0x80A12018 with all operand bits zeroed; 
+
+        constexpr uint32_t ftmopa_s_opcode_key =
+            ftmopa_s_base_encoding & ~ftmopa_s_operand_mask;
+
+        // Compare only the fixed opcode bits
+        return (insn & ~ftmopa_s_operand_mask) == ftmopa_s_opcode_key;
+    }
+
+
     StaticInstPtr
     decodeSmeOp32(ExtMachInst machInst)
     {
@@ -164,7 +218,10 @@ namespace Aarch64
             DPRINTF(Decode, "SME.F8 fastpath hit: insn=%#010x\n", insn);
             return decodeSmeOpF8(machInst);
         }
-        // ----------------------------------------------------------------
+        
+        if (isFtmopaNonWideningF16(insn) || isFtmopaNonWideningF32(insn)) {
+            return decodeSmeTmop(machInst);
+        }   
 
         if (op0 == 0) {
             if (op1 == 0) {
@@ -304,6 +361,81 @@ namespace Aarch64
         }
         return new Unknown64(machInst);
     }
+
+    StaticInstPtr
+    decodeSmeTmop(ExtMachInst machInst)
+    {
+        const uint32_t insn = (uint32_t)machInst;
+        DPRINTF(Decode, "decodeSmeTmop: insn=%#010x\n", insn);
+
+        // Decide element size from encoding
+        const bool isF16 = isFtmopaNonWideningF16(insn);
+        const bool isF32 = isFtmopaNonWideningF32(insn);
+
+        if (!isF16 && !isF32) {
+            DPRINTF(Decode, "decodeSmeTmop: predicate miss (insn=%#010x)\n", insn);
+            return new Unknown64(machInst);
+        }
+
+        // Zm: bits 20-16
+        const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+
+        // Zn group: Inst{9-6} -> pair {Zn1, Zn1+1}
+        const uint32_t zn_group = (uint32_t)bits(machInst, 9, 6);
+        const RegIndex Zn1 = (RegIndex)(zn_group << 1);
+
+        // Zk control reg: field {12-10} maps to Z20-Z23 or Z28-Z31
+        const uint32_t zk_field = (uint32_t)bits(machInst, 12, 10);
+        RegIndex Zk;
+        if (zk_field < 4) {
+            Zk = (RegIndex)(20 + zk_field);
+        } else {
+            Zk = (RegIndex)(24 + zk_field); // 4..7 -> 28..31
+        }
+
+        // Control segment index from Inst{5-4}
+        const uint32_t index = (uint32_t)bits(machInst, 5, 4);
+
+        // ZA tile index:
+        //   - half-precision:  bit 0 (ZA0–ZA1)
+        //   - single-precision: bits 1–0 (ZA0–ZA3)
+        RegIndex ZAda;
+        if (isF16) {
+            ZAda = (RegIndex)(uint32_t)bits(machInst, 0, 0);
+        } else {
+            ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0);
+        }
+
+        // ----- Build the IMM field ftmopaCode expects -----
+        //
+        // imm layout used in execute code:
+        //
+        //   [ 2:0]  ZAda
+        //   [ 4:3]  index
+        //   [ 9:5]  Zn group (base)
+        //   [14:10] Zm
+        //   [19:15] Zk
+        //
+        uint64_t imm = 0;
+        imm |= (uint64_t)(ZAda & 0x7);                // 2:0
+        imm |= (uint64_t)((index & 0x3)   << 3);      // 4:3
+        imm |= (uint64_t)((zn_group & 0x1F) << 5);    // 9:5
+        imm |= (uint64_t)((Zm       & 0x1F) << 10);   // 14:10
+        imm |= (uint64_t)((Zk       & 0x1F) << 15);   // 19:15
+
+        // ----- Instantiate the correct template form -----
+        if (isF16) {
+            // FTMOPA .H: TPSElem = uint16_t, TPDElem = uint16_t
+            return new SmeFtmopa<uint16_t, uint16_t>(
+                machInst, imm, Zn1, Zk, Zm, index);
+        } else {
+            // FTMOPA .S: TPSElem = uint32_t, TPDElem = uint32_t
+            return new SmeFtmopa<uint32_t, uint32_t>(
+                machInst, imm, Zn1, Zk, Zm, index);
+        }
+    }
+
+
 
     StaticInstPtr
     decodeSmeOpInt8(ExtMachInst machInst)

@@ -620,6 +620,129 @@ let {{
               ['uint16_t'], ['uint32_t'], wideningFmopxCode % "1")
 
     
+    # FTMOPA (non-widening, TMOP sparse outer product)
+    #
+    # Types:
+    #   - Half-precision variant:  TPDElem = uint16_t
+    #   - Single-precision variant: TPDElem = uint32_t
+    #
+    # imm layout (from decode):
+    #   [ 2:0]  za_tile   (ZAda)
+    #   [ 4:3]  index     (i2)
+    #   [ 9:5]  zn_base   (multi-vector group index)
+    #   [14:10] zm
+    #   [19:15] zk
+    #
+    ftmopaCode = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+
+        // Unpack imm
+        const uint64_t raw   = imm;
+        const uint8_t zaTile = (raw >> 0) & 0x7;
+        const uint8_t index  = (raw >> 3) & 0x3;
+        const uint8_t znBase = (raw >> 5) & 0x1F;  // multi-vector group index
+        const uint8_t zmIdx  = (raw >> 10) & 0x1F;
+        const uint8_t zkIdx  = (raw >> 15) & 0x1F;
+
+        // View ZA tile as TPDElem
+        auto tile = getTile<TPDElem>(ZA, zaTile);
+
+        // dim = VL / esize  (eCount already gives us VL / sizeof(TPDElem))
+        const unsigned dim    = eCount;
+        const unsigned csize  = 2 * dim;          // (VL*2)/esize
+        const unsigned segBase = index * csize;   // starting bit of ctrl segment
+
+        // --- Debug trace for FTMOPA execution ---
+        DPRINTF(Arm,
+            "SmeFtmopa: zaTile=%u index=%u znBase=%u zmIdx=%u zkIdx=%u "
+            "dim=%u segBase=%u\n",
+            (unsigned)zaTile,
+            (unsigned)index,
+            (unsigned)znBase,
+            (unsigned)zmIdx,
+            (unsigned)zkIdx,
+            (unsigned)dim,
+            (unsigned)segBase);
+
+        // --- Read Zk (control vector) ---
+        ArmISA::VecRegContainer zk;
+        auto zkRegId = ArmISA::vecRegClass[zkIdx];
+        xc->tcBase()->getReg(zkRegId, &zk);
+        const uint8_t *zkBytes = zk.as<uint8_t>();
+
+        auto ctrlBit = [&](unsigned bitIdx) -> bool {
+            unsigned byte = bitIdx / 8;
+            unsigned bit  = bitIdx % 8;
+            return (zkBytes[byte] >> bit) & 0x1;
+        };
+
+        // --- Read Zn1, Zn2, Zm as TPDElem arrays ---
+        const uint8_t zn1Idx = (uint8_t)(2 * znBase);
+        const uint8_t zn2Idx = (uint8_t)(2 * znBase + 1);
+
+        ArmISA::VecRegContainer zn1, zn2, zm;
+        auto zn1RegId = ArmISA::vecRegClass[zn1Idx];
+        auto zn2RegId = ArmISA::vecRegClass[zn2Idx];
+        auto zmRegId  = ArmISA::vecRegClass[zmIdx];
+
+        xc->tcBase()->getReg(zn1RegId, &zn1);
+        xc->tcBase()->getReg(zn2RegId, &zn2);
+        xc->tcBase()->getReg(zmRegId,  &zm);
+
+        const TPDElem *zn1Elems = zn1.as<TPDElem>();
+        const TPDElem *zn2Elems = zn2.as<TPDElem>();
+        const TPDElem *zmElems  = zm.as<TPDElem>();
+
+        // --- Main sparse outer product loop ---
+        for (unsigned row = 0; row < dim; ++row) {
+            for (unsigned col = 0; col < dim; ++col) {
+                // Select 1-in-2 element from {Zn1[row], Zn2[row]}
+                TPDElem elem1 = (TPDElem)0;
+                unsigned picked = 0;
+
+                for (unsigned r = 0; r < 2; ++r) {
+                    const unsigned bitIndex = segBase + 2 * col + r;
+
+                    if (!picked && ctrlBit(bitIndex)) {
+                        elem1 = (r == 0) ? zn1Elems[row] : zn2Elems[row];
+                        picked = 1;
+                    }
+                }
+
+                const TPDElem elem2 = zmElems[col];
+                TPDElem sum = tile[col][row]; // same layout as FMOPA
+
+                // ZA-targeting FP behavior: FPMulAdd_ZA(sum, elem1, elem2, FPCR)
+                TPDElem prod = fplibMul(elem1, elem2, fpscr);
+                TPDElem res  = fplibAdd(sum, prod, fpscr);
+
+                // Optional fine-grain debug for first few rows/cols
+                if (row < 2 && col < 2) {
+                    DPRINTF(Arm,
+                        "FTMOPA ZA[%u,%u]: elem1=%#x elem2=%#x "
+                        "sum=%#x -> res=%#x\n",
+                        (unsigned)row,
+                        (unsigned)col,
+                        (unsigned)elem1,
+                        (unsigned)elem2,
+                        (unsigned)sum,
+                        (unsigned)res);
+                }
+
+                tile[col][row] = res;
+            }
+        }
+    '''
+
+    # Instantiate for half-precision and single-precision (non-widening)
+    smeFPOPInst('ftmopa', 'Ftmopa', 'MatrixOPOp',
+                ['uint16_t', 'uint32_t'],   # TPSElem (unused, but must match)
+                ['uint16_t', 'uint32_t'],   # TPDElem
+                ftmopaCode)
+
+    
+    
+    
     # FMOPA (widening, 2-way, FP8 -> FP16)
     # - Per-BYTE predication (p?.b)
     # - Two 8-bit lanes feed one ZA.h half (tile[j][i])
