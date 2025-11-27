@@ -78,6 +78,11 @@ namespace Aarch64
 output decoder {{
 namespace Aarch64
 {
+    // Forward declarations for FTMOPA (TMOP) matchers
+    static inline bool isFtmopaNonWideningF16(uint32_t insn);
+    static inline bool isFtmopaNonWideningF32(uint32_t insn);
+    static inline bool isFtmopaWideningF16ToF32(uint32_t insn);
+
     // NOTE: This is called from a different decode tree (aarch64.isa).
     // For neatness and clarity we keep the code here order to keep all
     // SME things together.
@@ -97,6 +102,17 @@ namespace Aarch64
     decodeSmeInst(ExtMachInst machInst)
     {
         // Starting point for decoding: bits 31:25=1xx0000
+
+        const uint32_t insn = (uint32_t)machInst;
+
+        // Route *all* FTMOPA TMOP encodings (non-widening + widening)
+        // straight to the TMOP decoder.
+        if (isFtmopaNonWideningF16(insn) ||
+            isFtmopaNonWideningF32(insn) ||
+            isFtmopaWideningF16ToF32(insn)) {
+
+            return decodeSmeTmop(machInst);
+        }
 
         const uint8_t op0 = (uint8_t)bits(machInst, 30, 29);
         const uint8_t op1 = (uint8_t)bits(machInst, 24, 19);
@@ -201,6 +217,39 @@ namespace Aarch64
         // Compare only the fixed opcode bits
         return (insn & ~ftmopa_s_operand_mask) == ftmopa_s_opcode_key;
     }
+
+    /// FTMOPA (widening, 2-way, FP16 to FP32) matcher
+    static inline bool
+    isFtmopaWideningF16ToF32(uint32_t insn)
+    {
+        // Operand fields for the widening .S form:
+        //   Zm   : bits 20..16
+        //   K:Zk : bits 12..10
+        //   Zn   : bits  9..6
+        //   i2   : bits  5..4
+        //   ZAda : bits  1..0
+        constexpr uint32_t operand_mask =
+              (0x1Fu << 16)   // Zm
+            | (0x7u  << 10)   // K:Zk
+            | (0xFu  <<  6)   // Zn
+            | (0x3u  <<  4)   // i2
+            | (0x3u  <<  0);  // ZAda
+
+        // Fixed opcode pattern from the ARM ARM bit diagram:
+        // bits[31:0] with all operand fields zero =>
+        //   bits 31,24,22,21 = 1, all others (outside operands) = 0
+        constexpr uint32_t base_encoding =
+              (1u << 31)
+            | (1u << 24)
+            | (1u << 22)
+            | (1u << 21);     // 0x81600000
+
+        constexpr uint32_t opcode_key = base_encoding & ~operand_mask;
+
+        // Match only on the fixed opcode bits.
+        return (insn & ~operand_mask) == opcode_key;
+    }
+
 
 
     StaticInstPtr
@@ -367,6 +416,51 @@ namespace Aarch64
     {
         const uint32_t insn = (uint32_t)machInst;
         DPRINTF(Decode, "decodeSmeTmop: insn=%#010x\n", insn);
+
+        if (isFtmopaWideningF16ToF32(insn)) {
+            // Zm: bits 20-16
+            const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+
+            // Zn group: Inst{9-6} -> pair {Zn1, Zn1+1}
+            const uint32_t zn_group = (uint32_t)bits(machInst, 9, 6);
+            const RegIndex Zn1 = (RegIndex)(zn_group << 1);
+
+            // Zk control reg: field {12-10} maps to Z20-Z23 or Z28-Z31
+            const uint32_t zk_field = (uint32_t)bits(machInst, 12, 10);
+            RegIndex Zk;
+            if (zk_field < 4) {
+                Zk = (RegIndex)(20 + zk_field);
+            } else {
+                Zk = (RegIndex)(24 + zk_field); // 4..7 -> 28..31
+            }
+
+            // Control segment index from Inst{5-4}
+            const uint32_t index = (uint32_t)bits(machInst, 5, 4);
+
+            // Widening FTMOPA writes ZA.s (FP32), so we use bits [1:0] for ZAda.
+            const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0);
+
+            // Build imm exactly like non-widening FTMOPA
+            //
+            // imm layout:
+            //   [ 2:0]  ZAda
+            //   [ 4:3]  index
+            //   [ 9:5]  Zn group (base)
+            //   [14:10] Zm
+            //   [19:15] Zk
+            //
+            uint64_t imm = 0;
+            imm |= (uint64_t)(ZAda & 0x7);                 // 2:0
+            imm |= (uint64_t)((index    & 0x3)  << 3);     // 4:3
+            imm |= (uint64_t)((zn_group & 0x1F) << 5);     // 9:5
+            imm |= (uint64_t)((Zm       & 0x1F) << 10);    // 14:10
+            imm |= (uint64_t)((Zk       & 0x1F) << 15);    // 19:15
+
+            // FTMOPA widening: TPSElem = uint16_t (FP16), TPDElem = uint32_t (FP32)
+            return new SmeFtmopaWidening<uint16_t, uint32_t>(
+                machInst, imm, Zn1, Zk, Zm, index);
+        }
+
 
         // Decide element size from encoding
         const bool isF16 = isFtmopaNonWideningF16(insn);

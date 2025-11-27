@@ -741,7 +741,181 @@ let {{
                 ftmopaCode)
 
     
-    
+        # FTMOPA (widening, 2-way, FP16 -> FP32, TMOP sparse outer product)
+    #
+    #  - Sources: FP16 lanes in {Zn1.h, Zn2.h} and Zm.h
+    #  - Destination: ZA.s (FP32)
+    #  - Semantics (per element ZA[row,col]):
+    #
+    #        ZA[row,col] += dot( erow[0..1], ecol[0..1] )
+    #
+    #    where erow[0..1] come from {Zn1, Zn2} and ecol[0..1] from Zm,
+    #    and 2-in-4 structure is defined by TMOP control bits in Zk.
+    #
+    ftmopaWideningCode = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+
+        // --- Unpack imm (same layout as non-widening FTMOPA) ---
+        const uint64_t raw    = imm;
+        const uint8_t  zaTile = (raw >> 0) & 0x7;
+        const uint8_t  index  = (raw >> 3) & 0x3;
+        const uint8_t  znBase = (raw >> 5) & 0x1F;   // multi-vector group
+        const uint8_t  zmIdx  = (raw >> 10) & 0x1F;
+        const uint8_t  zkIdx  = (raw >> 15) & 0x1F;
+
+        // ZA tile as FP32 (TPDElem is uint32_t for this widening variant)
+        auto tile = getTile<TPDElem>(ZA, zaTile);
+
+        // For widening FTMOPA:
+        //
+        //   - ZA is ZA.s (32-bit elements)
+        //   - dim = VL / 32  (matrix is dim x dim)
+        //
+        // eCount is computed by smeFPOPInst as the number of TPDElem
+        // elements in a vector, so here eCount == dim.
+        const unsigned dim = eCount;
+
+        // Each TMOP control segment has 4*dim bits
+        // (4 bits per column: 2 positions × 2 source vectors).
+        const unsigned csize   = 4 * dim;
+        const unsigned segBase = index * csize;
+
+        // --- Debug trace to confirm decode/execute wiring ---
+        DPRINTF(Arm,
+            "SmeFtmopaWidening: zaTile=%u index=%u znBase=%u zmIdx=%u "
+            "zkIdx=%u dim=%u segBase=%u\n",
+            (unsigned)zaTile,
+            (unsigned)index,
+            (unsigned)znBase,
+            (unsigned)zmIdx,
+            (unsigned)zkIdx,
+            (unsigned)dim,
+            (unsigned)segBase);
+
+        // --- Read Zk (TMOP control) as bytes ---
+        ArmISA::VecRegContainer zk;
+        auto zkRegId = ArmISA::vecRegClass[zkIdx];
+        xc->tcBase()->getReg(zkRegId, &zk);
+        const uint8_t *zkBytes = zk.as<uint8_t>();
+
+        auto ctrlBit = [&](unsigned bitIdx) -> bool {
+            unsigned byte = bitIdx / 8;
+            unsigned bit  = bitIdx % 8;
+            return (zkBytes[byte] >> bit) & 0x1;
+        };
+
+        // --- Read Zn1, Zn2, Zm as FP16 lanes (TPSElem = uint16_t) ---
+        const uint8_t zn1Idx = (uint8_t)(2 * znBase);
+        const uint8_t zn2Idx = (uint8_t)(2 * znBase + 1);
+
+        ArmISA::VecRegContainer zn1, zn2, zm;
+        auto zn1RegId = ArmISA::vecRegClass[zn1Idx];
+        auto zn2RegId = ArmISA::vecRegClass[zn2Idx];
+        auto zmRegId  = ArmISA::vecRegClass[zmIdx];
+
+        xc->tcBase()->getReg(zn1RegId, &zn1);
+        xc->tcBase()->getReg(zn2RegId, &zn2);
+        xc->tcBase()->getReg(zmRegId,  &zm);
+
+        const TPSElem *zn1Elems = zn1.as<TPSElem>();   // FP16 bits
+        const TPSElem *zn2Elems = zn2.as<TPSElem>();   // FP16 bits
+        const TPSElem *zmElems  = zm.as<TPSElem>();    // FP16 bits
+
+        // We also need FPCR rounding mode for widening conversions
+        const auto rnd = FPCRRounding(fpscr);
+
+        // --- Main sparse outer-product loop (widening) ---
+        for (unsigned row = 0; row < dim; ++row) {
+            // For a given row, we use two FP16 lanes per source vector:
+            //   lane indices: 2*row and 2*row + 1
+            const unsigned lane0 = 2 * row;
+            const unsigned lane1 = 2 * row + 1;
+
+            for (unsigned col = 0; col < dim; ++col) {
+                // Columns: two FP16 lanes from Zm
+                const unsigned colLane0 = 2 * col;
+                const unsigned colLane1 = 2 * col + 1;
+
+                // --- Select two FP32 row values (erow[0], erow[1]) ---
+                TPDElem erow[2];
+
+                for (unsigned e = 0; e < 2; ++e) {
+                    const unsigned lane = (e == 0) ? lane0 : lane1;
+
+                    // Pick which source vector supplies this lane:
+                    //   v = 0 -> Zn1
+                    //   v = 1 -> Zn2
+                    //
+                    // Control bits in selected segment:
+                    //   bitOffset = segBase + 4*col + 2*e + v
+                    TPSElem src_bits = (TPSElem)0;
+
+                    for (unsigned v = 0; v < 2; ++v) {
+                        const unsigned bitOffset =
+                            segBase + 4 * col + 2 * e + v;
+
+                        if (ctrlBit(bitOffset)) {
+                            src_bits = (v == 0)
+                                     ? zn1Elems[lane]
+                                     : zn2Elems[lane];
+                            break; // 1-in-2 for this position
+                        }
+                    }
+
+                    // Widen FP16 -> FP32
+                    erow[e] = fplibConvert<TPSElem, TPDElem>(
+                        src_bits, rnd, fpscr);
+                }
+
+                // --- Dense column values from Zm (widened) ---
+                TPSElem col_bits0 = zmElems[colLane0];
+                TPSElem col_bits1 = zmElems[colLane1];
+
+                TPDElem ecol0 = fplibConvert<TPSElem, TPDElem>(
+                    col_bits0, rnd, fpscr);
+                TPDElem ecol1 = fplibConvert<TPSElem, TPDElem>(
+                    col_bits1, rnd, fpscr);
+
+                // --- Accumulate dot product into ZA.s ---
+                TPDElem acc = tile[col][row];
+
+                TPDElem prod0 = fplibMul(erow[0], ecol0, fpscr);
+                acc = fplibAdd(acc, prod0, fpscr);
+
+                TPDElem prod1 = fplibMul(erow[1], ecol1, fpscr);
+                acc = fplibAdd(acc, prod1, fpscr);
+
+                // Optional fine trace for top-left few cells
+                if (row < 2 && col < 2) {
+                    DPRINTF(Arm,
+                        "FTMOPA-WIDEN row=%u col=%u:\n"
+                        "    FP16 src:    zn1[%u]=0x%x zn2[%u]=0x%x   zm[%u]=0x%x zm[%u]=0x%x\n"
+                        "    FP32 widened: erow={0x%x,0x%x}  ecol={0x%x,0x%x}\n"
+                        "    acc(before)=0x%x  acc(after)=0x%x\n",
+                        row, col,
+                        lane0, (unsigned)zn1Elems[lane0],
+                        lane0, (unsigned)zn2Elems[lane0],
+                        colLane0, (unsigned)zmElems[colLane0],
+                        colLane1, (unsigned)zmElems[colLane1],
+                        (unsigned)erow[0], (unsigned)erow[1],
+                        (unsigned)ecol0, (unsigned)ecol1,
+                        (unsigned)tile[col][row],      // BEFORE update
+                        (unsigned)acc                  // AFTER update
+                    );
+                }
+
+                tile[col][row] = acc;
+            }
+        }
+    '''
+
+    # Instantiate *widening* FTMOPA: TPSElem = uint16_t (FP16 bits),
+    # TPDElem = uint32_t (FP32 bits).
+    smeFPOPInst('ftmopa', 'FtmopaWidening', 'MatrixOPOp',
+                ['uint16_t'], ['uint32_t'],
+                ftmopaWideningCode)
+
+
     
     # FMOPA (widening, 2-way, FP8 -> FP16)
     # - Per-BYTE predication (p?.b)
