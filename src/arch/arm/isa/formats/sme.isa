@@ -82,6 +82,7 @@ namespace Aarch64
     static inline bool isFtmopaNonWideningF16(uint32_t insn);
     static inline bool isFtmopaNonWideningF32(uint32_t insn);
     static inline bool isFtmopaWideningF16ToF32(uint32_t insn);
+    static inline bool isFtmopaWideningF8ToF16(uint32_t insn);
 
     // NOTE: This is called from a different decode tree (aarch64.isa).
     // For neatness and clarity we keep the code here order to keep all
@@ -109,7 +110,8 @@ namespace Aarch64
         // straight to the TMOP decoder.
         if (isFtmopaNonWideningF16(insn) ||
             isFtmopaNonWideningF32(insn) ||
-            isFtmopaWideningF16ToF32(insn)) {
+            isFtmopaWideningF16ToF32(insn) ||
+            isFtmopaWideningF8ToF16(insn)) {
 
             return decodeSmeTmop(machInst);
         }
@@ -250,6 +252,37 @@ namespace Aarch64
         return (insn & ~operand_mask) == opcode_key;
     }
 
+    /// FTMOPA (widening, 2-way, FP8 to FP16) matcher
+    static inline bool
+    isFtmopaWideningF8ToF16(uint32_t insn)
+    {
+        // Operand fields for the widening .H FP8->FP16 form:
+        //   Zm   : bits 20..16
+        //   K:Zk : bits 12..10
+        //   Zn   : bits  9..6   (multi-vector pair base)
+        //   i2   : bits  5..4
+        //   ZAda : bit   0      (ZA0..ZA1 for .H)
+        constexpr uint32_t operand_mask =
+            (0x1Fu << 16)   // Zm
+            | (0x7u  << 10)   // K:Zk
+            | (0xFu  <<  6)   // Zn group
+            | (0x3u  <<  4)   // i2
+            | (0x1u  <<  0);  // ZAda (.H: only bit 0)
+
+        // TODO: set base_encoding to the FP8->FP16 FTMOPA opcode with all
+        // operand fields zeroed. You can get this by assembling e.g.:
+        //
+        //   ftmopa za0.h, {z0.b-z1.b}, z0.b, z20.b[0]
+        //
+        // and masking off the operand bits using operand_mask (same method
+        // you used for the other FTMOPA matchers).
+        constexpr uint32_t base_encoding = 0x80600008u;
+
+        constexpr uint32_t opcode_key = base_encoding & ~operand_mask;
+
+        // Match only on the fixed opcode bits.
+        return (insn & ~operand_mask) == opcode_key;
+    }
 
 
     StaticInstPtr
@@ -458,6 +491,49 @@ namespace Aarch64
 
             // FTMOPA widening: TPSElem = uint16_t (FP16), TPDElem = uint32_t (FP32)
             return new SmeFtmopaWidening<uint16_t, uint32_t>(
+                machInst, imm, Zn1, Zk, Zm, index);
+        
+        } else if (isFtmopaWideningF8ToF16(insn)) {
+            // --- FTMOPA widening FP8->FP16 decodes ---
+
+            // Zm: bits 20-16
+            const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+
+            // Zn group: Inst{9-6} -> pair {Zn1, Zn1+1}
+            const uint32_t zn_group = (uint32_t)bits(machInst, 9, 6);
+            const RegIndex Zn1 = (RegIndex)(zn_group << 1);
+
+            // Zk control reg: field {12-10} maps to Z20-Z23 or Z28-Z31
+            const uint32_t zk_field = (uint32_t)bits(machInst, 12, 10);
+            RegIndex Zk;
+            if (zk_field < 4) {
+                Zk = (RegIndex)(20 + zk_field);
+            } else {
+                Zk = (RegIndex)(24 + zk_field); // 4..7 -> 28..31
+            }
+
+            // Control segment index from Inst{5-4}
+            const uint32_t index = (uint32_t)bits(machInst, 5, 4);
+
+            // FTMOPA FP8->FP16 writes ZA.h, so ZAda uses bit 0 (ZA0..ZA1)
+            const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 0, 0);
+
+            // imm layout:
+            //   [ 2:0]  ZAda
+            //   [ 4:3]  index
+            //   [ 9:5]  Zn group (base)
+            //   [14:10] Zm
+            //   [19:15] Zk
+            uint64_t imm = 0;
+            imm |= (uint64_t)(ZAda & 0x7);              // 2:0
+            imm |= (uint64_t)((index    & 0x3)  << 3);  // 4:3
+            imm |= (uint64_t)((zn_group & 0x1F) << 5);  // 9:5
+            imm |= (uint64_t)((Zm       & 0x1F) << 10); // 14:10
+            imm |= (uint64_t)((Zk       & 0x1F) << 15); // 19:15
+
+            // FTMOPA widening FP8->FP16:
+            //   TPSElem = uint8_t (FP8), TPDElem = uint16_t (FP16)
+            return new SmeFtmopaWideningF8<uint8_t, uint16_t>(
                 machInst, imm, Zn1, Zk, Zm, index);
         }
 

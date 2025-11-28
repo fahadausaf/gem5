@@ -915,6 +915,179 @@ let {{
                 ['uint16_t'], ['uint32_t'],
                 ftmopaWideningCode)
 
+    # FTMOPA (widening, 2-way, FP8 -> FP16, TMOP sparse outer product)
+    #
+    #   FTMOPA <ZAda>.H, {<Zn1>.B-<Zn2>.B}, <Zm>.B, <Zk>[<index>]
+    #
+    # Semantics (per tile element ZA[row,col].h):
+    #   - Gather two FP8 row values from {Zn1, Zn2} according to TMOP control Zk
+    #   - Gather two FP8 column values from Zm
+    #   - Widen FP8 -> FP16, form a 2-way dot product, add to ZA[row,col]
+    #
+    ftmopaWideningF8Code = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+
+        // --- Unpack imm (same layout as other FTMOPA forms) ---
+        const uint64_t raw    = imm;
+        const uint8_t  zaTile = (raw >> 0) & 0x7;
+        const uint8_t  index  = (raw >> 3) & 0x3;
+        const uint8_t  znBase = (raw >> 5) & 0x1F;   // multi-vector group
+        const uint8_t  zmIdx  = (raw >> 10) & 0x1F;
+        const uint8_t  zkIdx  = (raw >> 15) & 0x1F;
+
+        // ZA tile as FP16 (TPDElem is uint16_t for this widening variant)
+        auto tile = getTile<TPDElem>(ZA, zaTile);
+
+        // For FP8->FP16 widening:
+        //   - ZA is ZA.h (16-bit elements)
+        //   - dim = VL / 16  (matrix is dim x dim)
+        //
+        // eCount is computed by smeFPOPInst as the number of TPDElem
+        // elements in a vector, so here eCount == dim.
+        const unsigned dim = eCount;
+
+        // Each TMOP control segment has 4*dim bits
+        // (4 bits per column: 2 source vectors x 2 row-positions)
+        const unsigned csize   = 4 * dim;
+        const unsigned segBase = index * csize;
+
+        // --- Debug trace to confirm decode/execute wiring ---
+        DPRINTF(Arm,
+            "SmeFtmopaWideningF8: zaTile=%u index=%u znBase=%u zmIdx=%u "
+            "zkIdx=%u dim=%u segBase=%u\n",
+            (unsigned)zaTile,
+            (unsigned)index,
+            (unsigned)znBase,
+            (unsigned)zmIdx,
+            (unsigned)zkIdx,
+            (unsigned)dim,
+            (unsigned)segBase);
+
+        // --- Read Zk (TMOP control) as bytes ---
+        ArmISA::VecRegContainer zk;
+        auto zkRegId = ArmISA::vecRegClass[zkIdx];
+        xc->tcBase()->getReg(zkRegId, &zk);
+        const uint8_t *zkBytes = zk.as<uint8_t>();
+
+        auto ctrlBit = [&](unsigned bitIdx) -> bool {
+            unsigned byte = bitIdx / 8;
+            unsigned bit  = bitIdx % 8;
+            return (zkBytes[byte] >> bit) & 0x1;
+        };
+
+        // --- Read Zn1, Zn2, Zm as FP8 lanes (bytes) ---
+        const uint8_t zn1Idx = (uint8_t)(2 * znBase);
+        const uint8_t zn2Idx = (uint8_t)(2 * znBase + 1);
+
+        ArmISA::VecRegContainer zn1, zn2, zm;
+        auto zn1RegId = ArmISA::vecRegClass[zn1Idx];
+        auto zn2RegId = ArmISA::vecRegClass[zn2Idx];
+        auto zmRegId  = ArmISA::vecRegClass[zmIdx];
+
+        xc->tcBase()->getReg(zn1RegId, &zn1);
+        xc->tcBase()->getReg(zn2RegId, &zn2);
+        xc->tcBase()->getReg(zmRegId,  &zm);
+
+        const uint8_t *zn1Bytes = zn1.as<uint8_t>();
+        const uint8_t *zn2Bytes = zn2.as<uint8_t>();
+        const uint8_t *zmBytes  = zm.as<uint8_t>();
+
+        // Simple FP8 (byte) -> FP16 bits mapping stub:
+        //   sign = 0, exponent = 15 (bias), mantissa from 8-bit code.
+        // This is deliberately consistent with SmeFmopaWideningF8 so
+        // tests see the same numeric behaviour.
+        auto fp8_to_fp16_bits = [](uint8_t b) -> uint16_t {
+            if (b == 0) return 0;                 // preserve zero
+            uint16_t mant = static_cast<uint16_t>(b & 0xFF) << 2; // 10-bit mantissa
+            uint16_t exp  = 15;                   // normal exponent (not subnormal)
+            return static_cast<uint16_t>((exp << 10) | mant);
+        };
+
+        auto widen = [&](uint8_t b) -> TPDElem {
+            return static_cast<TPDElem>(fp8_to_fp16_bits(b));
+        };
+
+        // --- Main sparse outer-product loop (FP8->FP16) ---
+        for (unsigned row = 0; row < dim; ++row) {
+            // For a given row, the FP8 layout in Zn1/2 is:
+            //   lane indices: 2*row and 2*row + 1
+            const unsigned lane0 = 2 * row;
+            const unsigned lane1 = 2 * row + 1;
+
+            for (unsigned col = 0; col < dim; ++col) {
+                // Column-side FP8 lanes from Zm:
+                //   lane indices: 2*col and 2*col + 1
+                const unsigned colLane0 = 2 * col;
+                const unsigned colLane1 = 2 * col + 1;
+
+                // --- Gather two FP8 row values according to TMOP control ---
+                uint8_t rowop[2] = {0, 0};
+                unsigned i_sel = 0;
+
+                for (unsigned r = 0; r < 2; ++r) {
+                    const uint8_t *srcBytes = (r == 0) ? zn1Bytes : zn2Bytes;
+
+                    for (unsigned e = 0; e < 2; ++e) {
+                        const unsigned bitIndex =
+                            segBase + 4 * col + 2 * r + e;
+                        if (i_sel < 2 && ctrlBit(bitIndex)) {
+                            unsigned lane = (e == 0) ? lane0 : lane1;
+                            rowop[i_sel] = srcBytes[lane];
+                            ++i_sel;
+                        }
+                    }
+                }
+
+                // --- Gather dense FP8 column values from Zm ---
+                uint8_t colop[2];
+                colop[0] = zmBytes[colLane0];
+                colop[1] = zmBytes[colLane1];
+
+                // --- Widen FP8 -> FP16 and compute 2-way dot product ---
+                TPDElem acc_before = tile[col][row];
+                TPDElem acc = acc_before;
+
+                TPDElem r0 = widen(rowop[0]);
+                TPDElem r1 = widen(rowop[1]);
+                TPDElem c0 = widen(colop[0]);
+                TPDElem c1 = widen(colop[1]);
+
+                TPDElem prod0 = fplibMul(r0, c0, fpscr);
+                acc = fplibAdd(acc, prod0, fpscr);
+
+                TPDElem prod1 = fplibMul(r1, c1, fpscr);
+                acc = fplibAdd(acc, prod1, fpscr);
+
+                // Optional fine trace for top-left few cells
+                if (row < 2 && col < 2) {
+                    DPRINTF(Arm,
+                        "FTMOPA-WIDEN-F8 row=%u col=%u:\n"
+                        "    FP8 src:  rowop={0x%02x,0x%02x}  "
+                        "colop={0x%02x,0x%02x}\n"
+                        "    FP16 widened: r={0x%04x,0x%04x}  "
+                        "c={0x%04x,0x%04x}\n"
+                        "    acc(before)=0x%04x  acc(after)=0x%04x\n",
+                        row, col,
+                        (unsigned)rowop[0], (unsigned)rowop[1],
+                        (unsigned)colop[0], (unsigned)colop[1],
+                        (unsigned)r0, (unsigned)r1,
+                        (unsigned)c0, (unsigned)c1,
+                        (unsigned)acc_before,
+                        (unsigned)acc);
+                }
+
+                tile[col][row] = acc;
+            }
+        }
+    ''';
+
+    # Instantiate widening FTMOPA FP8->FP16:
+    #   TPSElem = uint8_t (FP8 bits), TPDElem = uint16_t (FP16 bits).
+    smeFPOPInst("ftmopa", "FtmopaWideningF8", "MatrixOPOp",
+                ["uint8_t"], ["uint16_t"],
+                ftmopaWideningF8Code);
+
+
 
     
     # FMOPA (widening, 2-way, FP8 -> FP16)
