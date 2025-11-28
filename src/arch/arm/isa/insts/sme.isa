@@ -1087,6 +1087,165 @@ let {{
                 ["uint8_t"], ["uint16_t"],
                 ftmopaWideningF8Code);
 
+    # FTMOPA (widening, 4-way, FP8 -> FP32, TMOP sparse outer product)
+    # FTMOPA <ZAda>.S, {<Zn1>.B-<Zn2>.B}, <Zm>.B, <Zk>[<index>]
+    ftmopaWidening4WayF8F32Code = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+
+        // --- Unpack imm (same layout as other FTMOPA forms) ---
+        const uint64_t raw    = imm;
+        const uint8_t  zaTile = (raw >> 0) & 0x7;
+        const uint8_t  index  = (raw >> 3) & 0x3;
+        const uint8_t  znBase = (raw >> 5) & 0x1F;   // multi-vector group
+        const uint8_t  zmIdx  = (raw >> 10) & 0x1F;
+        const uint8_t  zkIdx  = (raw >> 15) & 0x1F;
+
+        // ZA tile as FP32 (TPDElem is uint32_t for this widening variant)
+        auto tile = getTile<TPDElem>(ZA, zaTile);
+
+        // dim = VL / 32  (matrix is dim x dim)
+        // eCount (from smeFPOPInst) is exactly VL / 32 for TPDElem = uint32_t.
+        const unsigned dim = eCount;
+
+        // TMOP control:
+        //   csize = VL / 4 = 8 * dim  (bits per segment)
+        //   ctrl segment start = index * csize
+        const unsigned csize   = 8 * dim;
+        const unsigned segBase = index * csize;
+
+        DPRINTF(Arm,
+            "SmeFtmopaWidening4WayF8F32: zaTile=%u index=%u znBase=%u "
+            "zmIdx=%u zkIdx=%u dim=%u segBase=%u\n",
+            (unsigned)zaTile,
+            (unsigned)index,
+            (unsigned)znBase,
+            (unsigned)zmIdx,
+            (unsigned)zkIdx,
+            (unsigned)dim,
+            (unsigned)segBase);
+
+        // --- Read Zk (TMOP control) as bytes ---
+        ArmISA::VecRegContainer zk;
+        auto zkRegId = ArmISA::vecRegClass[zkIdx];
+        xc->tcBase()->getReg(zkRegId, &zk);
+        const uint8_t *zkBytes = zk.as<uint8_t>();
+
+        auto ctrlBit = [&](unsigned bitIdx) -> bool {
+            unsigned byte = bitIdx / 8;
+            unsigned bit  = bitIdx % 8;
+            return (zkBytes[byte] >> bit) & 0x1;
+        };
+
+        // --- Read Zn1, Zn2, Zm as FP8 lanes (bytes) ---
+        const uint8_t zn1Idx = (uint8_t)(2 * znBase);
+        const uint8_t zn2Idx = (uint8_t)(2 * znBase + 1);
+
+        ArmISA::VecRegContainer zn1, zn2, zm;
+        auto zn1RegId = ArmISA::vecRegClass[zn1Idx];
+        auto zn2RegId = ArmISA::vecRegClass[zn2Idx];
+        auto zmRegId  = ArmISA::vecRegClass[zmIdx];
+
+        xc->tcBase()->getReg(zn1RegId, &zn1);
+        xc->tcBase()->getReg(zn2RegId, &zn2);
+        xc->tcBase()->getReg(zmRegId,  &zm);
+
+        const uint8_t *zn1Bytes = zn1.as<uint8_t>();
+        const uint8_t *zn2Bytes = zn2.as<uint8_t>();
+        const uint8_t *zmBytes  = zm.as<uint8_t>();
+
+        // Same FP8->FP32 mapping stub as SmeFmopaWidening4WayF8F32 so
+        // tests see consistent numeric behaviour.
+        //
+        //   sign = 0, exponent = 127 (bias), mantissa uses the 8 FP8 bits
+        //   shifted into the high part of the 23-bit mantissa.
+        auto fp8_to_fp32_bits = [](uint8_t b) -> uint32_t {
+            if (b == 0) return 0u; // preserve zero exactly
+            uint32_t mant = static_cast<uint32_t>(b & 0xFFu) << 15;
+            uint32_t exp  = 127u;
+            return (exp << 23) | mant;
+        };
+
+        auto widen32 = [&](uint8_t b) -> TPDElem {
+            return static_cast<TPDElem>(fp8_to_fp32_bits(b));
+        };
+
+        // --- Main sparse outer-product loop (FP8->FP32, 4-way) ---
+        for (unsigned row = 0; row < dim; ++row) {
+
+            for (unsigned col = 0; col < dim; ++col) {
+                // Row and column byte indices in Zn1/2 and Zm:
+                // As per ARM ASL:
+                //   row bytes:   4*row + e, e=0..3
+                //   column bytes:4*col + j, j=0..3
+                uint8_t rowop[4] = {0, 0, 0, 0};
+                uint8_t colop[4] = {0, 0, 0, 0};
+
+                // ---- Build rowop[0..3] under TMOP 2-in-4 control ----
+                //
+                // For each r in {0,1} (Zn1, Zn2):
+                //   Scan 4 candidates e=0..3 from bytes (4*row+e).
+                //   Control bits for these are at:
+                //       bitIndex = segBase + 8*col + 4*r + e
+                //   Copy up to 2 bytes per r into rowop[2*r + i_sel].
+                //
+                for (unsigned r = 0; r < 2; ++r) {
+                    const uint8_t *srcBytes = (r == 0) ? zn1Bytes : zn2Bytes;
+                    unsigned i_sel = 0;
+
+                    for (unsigned e = 0; e < 4; ++e) {
+                        const unsigned bitIndex =
+                            segBase + 8 * col + 4 * r + e;
+
+                        if (i_sel < 2 && ctrlBit(bitIndex)) {
+                            const unsigned lane = 4 * row + e;
+                            rowop[2 * r + i_sel] = srcBytes[lane];
+                            ++i_sel;
+                        }
+                    }
+                }
+
+                // ---- Build colop[0..3] (dense) from Zm ----
+                for (unsigned j = 0; j < 4; ++j) {
+                    const unsigned lane = 4 * col + j;
+                    colop[j] = zmBytes[lane];
+                }
+
+                // ---- Widen FP8 -> FP32 and accumulate 4-way dot product ----
+                TPDElem acc_before = tile[col][row];
+                TPDElem acc = acc_before;
+
+                for (unsigned k = 0; k < 4; ++k) {
+                    TPDElem vrow = widen32(rowop[k]);
+                    TPDElem vcol = widen32(colop[k]);
+                    TPDElem prod = fplibMul(vrow, vcol, fpscr);
+                    acc = fplibAdd(acc, prod, fpscr);
+                }
+
+                if (row < 2 && col < 2) {
+                    DPRINTF(Arm,
+                        "FTMOPA-WIDEN-4WAY row=%u col=%u:\n"
+                        "    FP8 rowop={0x%02x,0x%02x,0x%02x,0x%02x}  "
+                        "colop={0x%02x,0x%02x,0x%02x,0x%02x}\n"
+                        "    acc(before)=0x%08x  acc(after)=0x%08x\n",
+                        row, col,
+                        (unsigned)rowop[0], (unsigned)rowop[1],
+                        (unsigned)rowop[2], (unsigned)rowop[3],
+                        (unsigned)colop[0], (unsigned)colop[1],
+                        (unsigned)colop[2], (unsigned)colop[3],
+                        (unsigned)acc_before,
+                        (unsigned)acc);
+                }
+
+                tile[col][row] = acc;
+            }
+        }
+    ''';
+
+    # Instantiate widening FTMOPA FP8->FP32 (4-way):
+    #   TPSElem = uint8_t (FP8 bits), TPDElem = uint32_t (FP32 bits).
+    smeFPOPInst("ftmopa", "FtmopaWidening4WayF8F32", "MatrixOPOp",
+                ["uint8_t"], ["uint32_t"],
+                ftmopaWidening4WayF8F32Code);
 
 
     
