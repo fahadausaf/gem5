@@ -39,6 +39,8 @@
 #define __ARCH_ARM_INSTS_SME_HH__
 
 #include "arch/arm/insts/static_inst.hh"
+#include "arch/arm/regs/int.hh"
+
 
 namespace gem5
 {
@@ -222,6 +224,108 @@ class SmeZeroOp : public ArmStaticInst
     std::string generateDisassembly(
             Addr pc, const loader::SymbolTable *symtab) const override;
 };
+
+// Used for SME FADD ZA.<T>[Wv, offs], {Zm...}
+class SmeFaddZaVecS : public ArmStaticInst
+{
+  protected:
+    RegIndex Wv;
+    RegIndex Zm;
+    uint8_t  off3;
+    uint8_t  nreg;
+
+  public:
+    // Old-style ctor used by auto-generated decoder (no extra fields)
+    SmeFaddZaVecS(ExtMachInst _machInst)
+      : ArmStaticInst("fadd_za_s", _machInst, SimdFloatAddOp),
+        Wv(0), Zm(0), off3(0), nreg(2)
+    {}
+
+    // New ctor used by our manual decode
+    SmeFaddZaVecS(ExtMachInst _machInst,
+                  RegIndex _Wv,
+                  RegIndex _Zm,
+                  uint8_t _off3,
+                  uint8_t _nreg)
+      : ArmStaticInst("fadd_za_s", _machInst, SimdFloatAddOp),
+        Wv(_Wv), Zm(_Zm), off3(_off3), nreg(_nreg)
+    {
+        RegId wvId(intRegClass, Wv);
+        setSrcRegIdx(0, wvId);
+    }
+
+
+    Fault execute(ExecContext *xc,
+                  trace::InstRecord *trace) const override;
+};
+
+
+class SmeFaddZaVecD : public ArmStaticInst
+{
+  protected:
+    RegIndex Wv;
+    RegIndex Zm;
+    uint8_t  off3;
+    uint8_t  nreg;
+
+  public:
+    // Old-style ctor
+    SmeFaddZaVecD(ExtMachInst _machInst)
+      : ArmStaticInst("fadd_za_d", _machInst, SimdFloatAddOp),
+        Wv(0), Zm(0), off3(0), nreg(2)
+    {}
+
+    // New ctor
+    SmeFaddZaVecD(ExtMachInst _machInst,
+                  RegIndex _Wv,
+                  RegIndex _Zm,
+                  uint8_t _off3,
+                  uint8_t _nreg)
+      : ArmStaticInst("fadd_za_d", _machInst, SimdFloatAddOp),
+        Wv(_Wv), Zm(_Zm), off3(_off3), nreg(_nreg)
+    {
+        RegId wvId(intRegClass, Wv);
+        setSrcRegIdx(0, wvId);
+    }
+
+
+    Fault execute(ExecContext *xc,
+                  trace::InstRecord *trace) const override;
+};
+
+
+class SmeFaddZaVecH : public ArmStaticInst
+{
+  protected:
+    RegIndex Wv;
+    RegIndex Zm;
+    uint8_t  off3;
+    uint8_t  nreg;
+
+  public:
+    // Old-style ctor
+    SmeFaddZaVecH(ExtMachInst _machInst)
+      : ArmStaticInst("fadd_za_h", _machInst, SimdFloatAddOp),
+        Wv(0), Zm(0), off3(0), nreg(2)
+    {}
+
+    // New ctor
+    SmeFaddZaVecH(ExtMachInst _machInst,
+                  RegIndex _Wv,
+                  RegIndex _Zm,
+                  uint8_t _off3,
+                  uint8_t _nreg)
+      : ArmStaticInst("fadd_za_h", _machInst, SimdFloatAddOp),
+        Wv(_Wv), Zm(_Zm), off3(_off3), nreg(_nreg)
+    {
+        RegId wvId(intRegClass, Wv);
+        setSrcRegIdx(0, wvId);
+    }
+
+    Fault execute(ExecContext *xc,
+                  trace::InstRecord *trace) const override;
+};
+
 
 } // namespace ArmISA
 } // namespace gem5

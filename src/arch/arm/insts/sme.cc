@@ -36,12 +36,22 @@
  */
 
 #include "arch/arm/insts/sme.hh"
+#include "arch/arm/regs/mat.hh"   // MatRegContainer, getTile
+#include "arch/arm/regs/vec.hh"        // VecRegContainer, vecRegClass
+#include "debug/Decode.hh"
+#include "debug/Arm.hh"
+
+#include <vector>
+
+
 
 namespace gem5
 {
 
 namespace ArmISA
 {
+
+
 
 std::string
 SmeAddOp::generateDisassembly(Addr pc,
@@ -178,6 +188,57 @@ SmeZeroOp::generateDisassembly(Addr pc,
     ccprintf(ss, "#%d", imm);
     return ss.str();
 }
+
+Fault
+SmeFaddZaVecS::execute(ExecContext *xc,
+                       trace::InstRecord *trace) const
+{
+    const uint32_t insn = (uint32_t)machInst;
+
+    // Optional: only if you’ve added the include
+    // #include "debug/Arm.hh"
+    // DPRINTF(Arm,
+    //     "SmeFaddZaVecD::execute STUB: insn=%#010x Wv=%u Zm=%u off3=%u nreg=%u\n",
+    //     insn, (unsigned)Wv, (unsigned)Zm, (unsigned)off3, (unsigned)nreg);
+
+    return NoFault;
+}
+
+
+
+Fault
+SmeFaddZaVecD::execute(ExecContext *xc,
+                       trace::InstRecord *trace) const
+{
+    const uint32_t insn = (uint32_t)machInst;
+
+    // Optional: only if you’ve added the include
+    // #include "debug/Arm.hh"
+    // DPRINTF(Arm,
+    //     "SmeFaddZaVecD::execute STUB: insn=%#010x Wv=%u Zm=%u off3=%u nreg=%u\n",
+    //     insn, (unsigned)Wv, (unsigned)Zm, (unsigned)off3, (unsigned)nreg);
+
+    return NoFault;
+}
+
+
+
+Fault
+SmeFaddZaVecH::execute(ExecContext *xc,
+                       trace::InstRecord *trace) const
+{
+    const uint32_t insn = (uint32_t)machInst;
+
+    // Optional: only if you’ve added the include
+    // #include "debug/Arm.hh"
+    // DPRINTF(Arm,
+    //     "SmeFaddZaVecD::execute STUB: insn=%#010x Wv=%u Zm=%u off3=%u nreg=%u\n",
+    //     insn, (unsigned)Wv, (unsigned)Zm, (unsigned)off3, (unsigned)nreg);
+
+    return NoFault;
+}
+
+
 
 } // namespace ArmISA
 } // namespace gem5

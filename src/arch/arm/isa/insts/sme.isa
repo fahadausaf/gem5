@@ -492,6 +492,7 @@ let {{
                          'class_name' : 'Sme' + Name}
             exec_output += SmeOpExecDeclare.subst(substDict)
 
+    
     # ADDHA
     addCode = '''
         for (int col = 0; col < eCount; ++col) {
@@ -1574,5 +1575,6 @@ let {{
 
     # ZERO
     smeZeroInst("zero", "Zero", "MatrixOp", ["uint64_t"])
+
 
 }};

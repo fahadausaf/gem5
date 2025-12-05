@@ -46,6 +46,7 @@ namespace Aarch64
     StaticInstPtr decodeSmeInst(ExtMachInst);
 
         StaticInstPtr decodeSmeOp32(ExtMachInst);
+            StaticInstPtr decodeSmeZaVecAcc(ExtMachInst);
             StaticInstPtr decodeSmeOpFp32(ExtMachInst);
             StaticInstPtr decodeSmeOpBf16(ExtMachInst);
             StaticInstPtr decodeSmeOpFp16(ExtMachInst);
@@ -85,6 +86,12 @@ namespace Aarch64
     static inline bool isFtmopaWideningF8ToF16(uint32_t insn);
     static inline bool isFtmopaWidening4WayF8ToF32(uint32_t insn);
 
+    // Forward declarations for SME2 FADD ZA helpers
+    static inline bool isSmeFaddZa2SD(uint32_t insn);
+    static inline bool isSmeFaddZa2H(uint32_t insn);
+    static inline bool isSmeFaddZa4H(uint32_t insn);
+
+
 
     // NOTE: This is called from a different decode tree (aarch64.isa).
     // For neatness and clarity we keep the code here order to keep all
@@ -107,7 +114,8 @@ namespace Aarch64
         // Starting point for decoding: bits 31:25=1xx0000
 
         const uint32_t insn = (uint32_t)machInst;
-
+        
+        
         // Route *all* FTMOPA TMOP encodings (non-widening + widening)
         // straight to the TMOP decoder.
         if (isFtmopaNonWideningF16(insn) ||
@@ -118,6 +126,19 @@ namespace Aarch64
 
             return decodeSmeTmop(machInst);
         }
+
+        // --- SME2 FADD ZA.<T>[Wv, off3{, VGx2/VGx4}], {Zm...} ---
+        if (isSmeFaddZa2SD(insn) ||
+            isSmeFaddZa2H(insn)  ||
+            isSmeFaddZa4H(insn)) {
+
+            DPRINTF(Decode,
+                    "decodeSmeInst: FADD ZA vector acc insn=%#010x -> decodeSmeZaVecAcc\n",
+                    insn);
+            return decodeSmeZaVecAcc(machInst);
+        }
+
+
 
 
         const uint8_t op0 = (uint8_t)bits(machInst, 30, 29);
@@ -312,6 +333,87 @@ namespace Aarch64
         return (insn & ~operand_mask) == opcode_key;
     }
 
+    /// FADD ZA.<T>[<Wv>, <offs>{, VGx2}], { <Zm1>.<T>-<Zm2>.<T> }
+    static inline bool
+    isSmeFaddZa2SD(uint32_t insn)
+    {
+        // Operand bits: sz(22), Rv(14-13), Zm(9-7), off3(2-0), S(4)
+        constexpr uint32_t operandMask =
+            (1u << 22) |        // sz
+            (3u << 13) |        // Rv
+            (7u << 7)  |        // Zm
+            (7u << 0)  |        // off3
+            (1u << 4);          // S
+
+        constexpr uint32_t opcodeKey = 0xC1A01C00u;
+
+        return (insn & ~operandMask) == opcodeKey;
+    }
+
+    /// FADD ZA.H[<Wv>, <offs>{, VGx2}], { <Zm1>.H-<Zm2>.H }
+    static inline bool
+    isSmeFaddZa2H(uint32_t insn)
+    {
+        // Operand bits: Rv(14-13), Zm(9-7), off3(2-0), S(4)
+        constexpr uint32_t operandMask =
+            (3u << 13) |        // Rv
+            (7u << 7)  |        // Zm
+            (7u << 0)  |        // off3
+            (1u << 4);          // S
+
+        constexpr uint32_t opcodeKey = 0xC1A41C00u;
+
+        return (insn & ~operandMask) == opcodeKey;
+    }
+
+    /// FADD ZA.H[<Wv>, <offs>{, VGx4}], { <Zm1>.H-<Zm4>.H }
+    static inline bool
+    isSmeFaddZa4H(uint32_t insn)
+    {
+        // Same operand bits as VGx2-H
+        constexpr uint32_t operandMask =
+            (3u << 13) |        // Rv
+            (7u << 7)  |        // Zm
+            (7u << 0)  |        // off3
+            (1u << 4);          // S
+
+        constexpr uint32_t opcodeKey = 0xC1A51C00u;
+
+        return (insn & ~operandMask) == opcodeKey;
+    }
+
+
+    inline StaticInstPtr
+    decodeSmeZaVecAcc(ExtMachInst machInst)
+    {
+        const uint32_t insn = (uint32_t)machInst;
+        DPRINTF(Decode, "decodeSmeZaVecAcc: insn=%#010x\n", insn);
+
+        // Extract the fields according to the ARM encoding
+        unsigned sz   = bits(machInst, 23, 22);       // element size
+        RegIndex Wv   = (RegIndex)bits(machInst, 9, 5);      // Wv (row index)
+        RegIndex Zm   = (RegIndex)bits(machInst, 20, 16);    // Zm base
+        uint8_t  off3 = (uint8_t)bits(machInst, 12, 10);     // #imm3
+        uint8_t  nreg = bits(machInst, 13, 13) ? 4 : 2;      // VGx2 / VGx4
+
+        DPRINTF(Decode,
+            "decodeSmeZaVecAcc: sz=%u Wv=%u Zm=%u off3=%u nreg=%u\n",
+            sz, (unsigned)Wv, (unsigned)Zm, (unsigned)off3, (unsigned)nreg);
+
+        switch (sz) {
+        case 0b01: // S
+            return new SmeFaddZaVecS(machInst, Wv, Zm, off3, nreg);
+        case 0b10: // D
+            return new SmeFaddZaVecD(machInst, Wv, Zm, off3, nreg);
+        case 0b00: // H
+            return new SmeFaddZaVecH(machInst, Wv, Zm, off3, nreg);
+        default:
+            DPRINTF(Decode,
+                "decodeSmeZaVecAcc: unsupported sz=%u, returning Unknown64\n",
+                sz);
+            return new Unknown64(machInst);
+        }
+    }
 
 
     StaticInstPtr
@@ -322,17 +424,14 @@ namespace Aarch64
         const uint8_t op2 = (uint8_t)bits(machInst, 21);
         const uint8_t op3 = (uint8_t)bits(machInst, 3);
 
-        // ---- TEMP DEBUG fast-path: fmopa za0.h, p0/m, p1/m, z0.b, z1.b ----
-        // encoding bytes: [0x08, 0x20, 0xA1, 0x80] => 0x80A12008
         const uint32_t insn = (uint32_t)machInst;
-        if (insn == 0x80A12008) {
-            DPRINTF(Decode, "SME.F8 fastpath hit: insn=%#010x\n", insn);
-            return decodeSmeOpF8(machInst);
-        }
-        
+
+
+        // (Optional / mostly redundant, since decodeSmeInst already routes TMOP)
         if (isFtmopaNonWideningF16(insn) || isFtmopaNonWideningF32(insn)) {
             return decodeSmeTmop(machInst);
-        }   
+        }
+   
 
         if (op0 == 0) {
             if (op1 == 0) {
@@ -379,8 +478,10 @@ namespace Aarch64
     StaticInstPtr
     decodeSmeOpFp32(ExtMachInst machInst)
     {
-        const uint32_t S = (uint32_t)bits(machInst, 4, 4);
+        const uint32_t insn = (uint32_t)machInst;
 
+        // FMOPA/FMOPS
+        const uint32_t S = (uint32_t)bits(machInst, 4, 4);
         const RegIndex Zm = (RegIndex)(uint32_t)(bits(machInst, 20, 16));
         const RegIndex Zn = (RegIndex)(uint32_t)(bits(machInst, 9, 5));
         const RegIndex Pn = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
@@ -455,6 +556,9 @@ namespace Aarch64
     StaticInstPtr
     decodeSmeOpFp16(ExtMachInst machInst)
     {
+        const uint32_t insn = (uint32_t)machInst;
+
+        // FP16 SME ops below 
         const uint32_t S = (uint32_t)bits(machInst, 4, 4);
 
         const RegIndex Zm = (RegIndex)(uint32_t)(bits(machInst, 20, 16));
@@ -678,7 +782,6 @@ namespace Aarch64
     }
 
 
-
     StaticInstPtr
     decodeSmeOpInt8(ExtMachInst machInst)
     {
@@ -758,6 +861,7 @@ namespace Aarch64
     StaticInstPtr
     decodeSmeOpFp64(ExtMachInst machInst)
     {
+        
         const uint32_t S = (uint32_t)bits(machInst, 4, 4);
 
         const RegIndex Zm = (RegIndex)(uint32_t)(bits(machInst, 20, 16));
