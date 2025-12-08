@@ -114,6 +114,7 @@ namespace Aarch64
         // Starting point for decoding: bits 31:25=1xx0000
 
         const uint32_t insn = (uint32_t)machInst;
+
         
         
         // Route *all* FTMOPA TMOP encodings (non-widening + widening)
@@ -133,11 +134,10 @@ namespace Aarch64
             isSmeFaddZa4H(insn)) {
 
             DPRINTF(Decode,
-                    "decodeSmeInst: FADD ZA vector acc insn=%#010x -> decodeSmeZaVecAcc\n",
-                    insn);
+                "decodeSmeInst: FADD ZA vector acc insn=%#010x -> decodeSmeZaVecAcc\n",
+                insn);
             return decodeSmeZaVecAcc(machInst);
         }
-
 
 
 
@@ -337,13 +337,13 @@ namespace Aarch64
     static inline bool
     isSmeFaddZa2SD(uint32_t insn)
     {
-        // Operand bits: sz(22), Rv(14-13), Zm(9-7), off3(2-0), S(4)
+        // Operand bits: sz(22), Rv(14-13), Zm(9-6), off3(2-0), S(4)
         constexpr uint32_t operandMask =
-            (1u << 22) |        // sz
-            (3u << 13) |        // Rv
-            (7u << 7)  |        // Zm
-            (7u << 0)  |        // off3
-            (1u << 4);          // S
+            (1u  << 22)   // sz
+            | (3u  << 13)   // Rv
+            | (0xFu << 6)   // Zm (4 bits, 9:6)
+            | (7u  << 0)    // off3
+            | (1u  << 4);   // S
 
         constexpr uint32_t opcodeKey = 0xC1A01C00u;
 
@@ -354,12 +354,12 @@ namespace Aarch64
     static inline bool
     isSmeFaddZa2H(uint32_t insn)
     {
-        // Operand bits: Rv(14-13), Zm(9-7), off3(2-0), S(4)
+        // Operand bits: Rv(14-13), Zm(9-6), off3(2-0), S(4)
         constexpr uint32_t operandMask =
-            (3u << 13) |        // Rv
-            (7u << 7)  |        // Zm
-            (7u << 0)  |        // off3
-            (1u << 4);          // S
+            (3u  << 13)   // Rv
+            | (0xFu << 6)   // Zm (4 bits, 9:6)
+            | (7u  << 0)    // off3
+            | (1u  << 4);   // S
 
         constexpr uint32_t opcodeKey = 0xC1A41C00u;
 
@@ -370,12 +370,12 @@ namespace Aarch64
     static inline bool
     isSmeFaddZa4H(uint32_t insn)
     {
-        // Same operand bits as VGx2-H
+        // Operand bits: Rv(14-13), Zm(9-7), off3(2-0), S(4)
         constexpr uint32_t operandMask =
-            (3u << 13) |        // Rv
-            (7u << 7)  |        // Zm
-            (7u << 0)  |        // off3
-            (1u << 4);          // S
+            (3u  << 13)   // Rv
+            | (7u  << 7)    // Zm (3 bits, 9:7)
+            | (7u  << 0)    // off3
+            | (1u  << 4);   // S
 
         constexpr uint32_t opcodeKey = 0xC1A51C00u;
 
@@ -383,37 +383,52 @@ namespace Aarch64
     }
 
 
-    inline StaticInstPtr
+    StaticInstPtr
     decodeSmeZaVecAcc(ExtMachInst machInst)
     {
-        const uint32_t insn = (uint32_t)machInst;
-        DPRINTF(Decode, "decodeSmeZaVecAcc: insn=%#010x\n", insn);
+        uint32_t insn = (uint32_t)machInst;
 
-        // Extract the fields according to the ARM encoding
-        unsigned sz   = bits(machInst, 23, 22);       // element size
-        RegIndex Wv   = (RegIndex)bits(machInst, 9, 5);      // Wv (row index)
-        RegIndex Zm   = (RegIndex)bits(machInst, 20, 16);    // Zm base
-        uint8_t  off3 = (uint8_t)bits(machInst, 12, 10);     // #imm3
-        uint8_t  nreg = bits(machInst, 13, 13) ? 4 : 2;      // VGx2 / VGx4
+        uint32_t sz   = bits(insn, 23, 22);
+        uint32_t Wv   = bits(insn, 20, 16);
+        uint32_t off3 = bits(insn, 2, 0);
+
+        uint32_t nreg;
+        uint32_t zmField;
+
+        if (isSmeFaddZa4H(insn)) {
+            // Four ZA single-vectors → Zm bits [9:7], groups of 4
+            nreg    = 4;
+            zmField = bits(insn, 9, 7);
+        } else {
+            // Two ZA single-vectors (.S/.D or .H) → Zm bits [9:6], groups of 2
+            nreg    = 2;
+            zmField = bits(insn, 9, 6);
+        }
+
+        RegIndex zmBase = (RegIndex)(zmField << (nreg == 2 ? 1 : 2));
 
         DPRINTF(Decode,
-            "decodeSmeZaVecAcc: sz=%u Wv=%u Zm=%u off3=%u nreg=%u\n",
-            sz, (unsigned)Wv, (unsigned)Zm, (unsigned)off3, (unsigned)nreg);
+            "decodeSmeZaVecAcc: insn=0x%08x sz=%u Wv=%u ZmBase=%u off3=%u nreg=%u\n",
+            insn, sz, Wv, (unsigned)zmBase, off3, nreg);
 
-        switch (sz) {
-        case 0b01: // S
-            return new SmeFaddZaVecS(machInst, Wv, Zm, off3, nreg);
-        case 0b10: // D
-            return new SmeFaddZaVecD(machInst, Wv, Zm, off3, nreg);
-        case 0b00: // H
-            return new SmeFaddZaVecH(machInst, Wv, Zm, off3, nreg);
-        default:
-            DPRINTF(Decode,
-                "decodeSmeZaVecAcc: unsupported sz=%u, returning Unknown64\n",
-                sz);
-            return new Unknown64(machInst);
+        // For now: only handle the double-precision ZA.D VGx2 form
+        if (sz == 2 && isSmeFaddZa2SD(insn)) {
+            uint64_t imm = off3 & 0x7;
+
+            RegIndex op1 = Wv;      // Wv (vector index)
+            RegIndex op2 = zmBase;  // base Zm group
+            RegIndex gp1 = 0;       // predicates not wired yet
+            RegIndex gp2 = 0;
+
+            // NOTE: use uint64_t here, NOT double
+            return new SmeFaddZaD<uint64_t, uint64_t>(
+                machInst, imm, op1, gp1, gp2, op2);
         }
+
+        return new Unknown64(machInst);
     }
+
+
 
 
     StaticInstPtr

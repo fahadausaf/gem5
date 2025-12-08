@@ -1374,6 +1374,42 @@ let {{
 
 
 
+    faddZaCode_old = '''
+    auto tile = getTile<TPDElem>(ZA, imm);
+    FPSCR fpscr = (FPSCR) Fpscr;
+
+    for (int j = 0; j < eCount; ++j) {
+        if (!GpOp1_xd[j]) {
+            continue;
+        }
+        TPDElem val1 = AA64FpOp1_xd[j];
+
+        for (int i = 0; i < eCount; ++i) {
+            if (!GpOp2_xd[i]) {
+                continue;
+            }
+            TPDElem val2 = AA64FpOp2_xd[i];
+
+            // res = val1 + val2
+            TPDElem res = fplibAdd(val1, val2, fpscr);
+
+            // Accumulate into the ZA tile
+            tile[j][i] = fplibAdd(tile[j][i], res, fpscr);
+        }
+    }
+    '''
+
+    faddZaCode = '''
+        return NoFault;
+        ''';
+
+    smeFPOPInst('fadd_za_d', 'FaddZaD', 'MatrixOPOp',
+                ['uint32_t', 'uint64_t'],   # src element types
+                ['uint32_t', 'uint64_t'],   # ZA element types
+                faddZaCode)
+
+
+
     # LD1B
     smeLd1xInst('ld1b', 'Ld1b', 'MemReadOp', ['uint8_t'])
 
@@ -1572,6 +1608,8 @@ let {{
     smeIntOPInst('usmops', 'Usmops', 'MatrixOPOp', ['uint8_t', 'uint16_t'],
                  ['int8_t', 'int16_t'], ['int32_t', 'int64_t'],
                  intMopxCode % "-")
+
+
 
     # ZERO
     smeZeroInst("zero", "Zero", "MatrixOp", ["uint64_t"])

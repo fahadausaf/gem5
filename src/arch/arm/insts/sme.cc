@@ -193,48 +193,38 @@ Fault
 SmeFaddZaVecS::execute(ExecContext *xc,
                        trace::InstRecord *trace) const
 {
-    const uint32_t insn = (uint32_t)machInst;
-
-    // Optional: only if you’ve added the include
-    // #include "debug/Arm.hh"
-    // DPRINTF(Arm,
-    //     "SmeFaddZaVecD::execute STUB: insn=%#010x Wv=%u Zm=%u off3=%u nreg=%u\n",
-    //     insn, (unsigned)Wv, (unsigned)Zm, (unsigned)off3, (unsigned)nreg);
-
+    DPRINTF(Arm,
+        "FADD-S-EXEC: stub Wv=%u Zm=%u off3=%u nreg=%u\n",
+        (unsigned)Wv, (unsigned)Zm,
+        (unsigned)off3, (unsigned)nreg);
     return NoFault;
 }
-
-
 
 Fault
 SmeFaddZaVecD::execute(ExecContext *xc,
                        trace::InstRecord *trace) const
 {
-    const uint32_t insn = (uint32_t)machInst;
+    return NoFault;
+}
 
-    // Optional: only if you’ve added the include
-    // #include "debug/Arm.hh"
-    // DPRINTF(Arm,
-    //     "SmeFaddZaVecD::execute STUB: insn=%#010x Wv=%u Zm=%u off3=%u nreg=%u\n",
-    //     insn, (unsigned)Wv, (unsigned)Zm, (unsigned)off3, (unsigned)nreg);
-
+Fault
+SmeFaddZaVecH::execute(ExecContext *xc,
+                       trace::InstRecord *trace) const
+{
+    DPRINTF(Arm,
+        "FADD-H-EXEC: stub Wv=%u Zm=%u off3=%u nreg=%u\n",
+        (unsigned)Wv, (unsigned)Zm,
+        (unsigned)off3, (unsigned)nreg);
     return NoFault;
 }
 
 
 
 Fault
-SmeFaddZaVecH::execute(ExecContext *xc,
-                       trace::InstRecord *trace) const
+SmeZaVecAccStub::execute(ExecContext *xc,
+                         trace::InstRecord *trace) const
 {
-    const uint32_t insn = (uint32_t)machInst;
-
-    // Optional: only if you’ve added the include
-    // #include "debug/Arm.hh"
-    // DPRINTF(Arm,
-    //     "SmeFaddZaVecD::execute STUB: insn=%#010x Wv=%u Zm=%u off3=%u nreg=%u\n",
-    //     insn, (unsigned)Wv, (unsigned)Zm, (unsigned)off3, (unsigned)nreg);
-
+    DPRINTF(Decoder, "SmeZaVecAccStub::execute called\n");
     return NoFault;
 }
 
