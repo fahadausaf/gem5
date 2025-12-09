@@ -39,8 +39,6 @@
 #define __ARCH_ARM_INSTS_SME_HH__
 
 #include "arch/arm/insts/static_inst.hh"
-#include "arch/arm/regs/int.hh"
-
 
 namespace gem5
 {
@@ -224,115 +222,6 @@ class SmeZeroOp : public ArmStaticInst
     std::string generateDisassembly(
             Addr pc, const loader::SymbolTable *symtab) const override;
 };
-
-class SmeZaVecAccStub : public ArmStaticInst
-{
-  public:
-    SmeZaVecAccStub(ExtMachInst machInst)
-      : ArmStaticInst("sme_fadd_za_vec_stub", machInst, SimdFloatAddOp)
-    {}
-
-    Fault execute(ExecContext *xc,
-                  trace::InstRecord *trace) const override;
-};
-
-// Used for SME FADD ZA.<T>[Wv, offs], {Zm...}
-
-/*** FADD ZA.S[Wv, off3], {Zm.S, ...} ***/
-class SmeFaddZaVecS : public ArmStaticInst
-{
-  protected:
-    RegIndex Wv;
-    RegIndex Zm;
-    uint8_t  off3;
-    uint8_t  nreg;
-
-  public:
-    SmeFaddZaVecS(ExtMachInst _machInst)
-      : ArmStaticInst("fadd_za_s", _machInst, SimdFloatAddOp),
-        Wv(0), Zm(0), off3(0), nreg(2)
-    {}
-
-    SmeFaddZaVecS(ExtMachInst _machInst,
-                  RegIndex _Wv,
-                  RegIndex _Zm,
-                  uint8_t _off3,
-                  uint8_t _nreg)
-      : ArmStaticInst("fadd_za_s", _machInst, SimdFloatAddOp),
-        Wv(_Wv), Zm(_Zm), off3(_off3), nreg(_nreg)
-    {
-        RegId wvId(intRegClass, Wv);
-        setSrcRegIdx(0, wvId);
-    }
-
-    Fault execute(ExecContext *xc,
-                  trace::InstRecord *trace) const override;
-};
-
-
-/*** FADD ZA.D[Wv, off3], {Zm.D, ...} ***/
-class SmeFaddZaVecD : public ArmStaticInst
-{
-  protected:
-    RegIndex Wv;
-    RegIndex Zm;
-    uint8_t  off3;
-    uint8_t  nreg;
-
-  public:
-    SmeFaddZaVecD(ExtMachInst _machInst)
-      : ArmStaticInst("fadd_za_d", _machInst, SimdFloatAddOp),
-        Wv(0), Zm(0), off3(0), nreg(2)
-    {}
-
-    SmeFaddZaVecD(ExtMachInst _machInst,
-                  RegIndex _Wv,
-                  RegIndex _Zm,
-                  uint8_t _off3,
-                  uint8_t _nreg)
-      : ArmStaticInst("fadd_za_d", _machInst, SimdFloatAddOp),
-        Wv(_Wv), Zm(_Zm), off3(_off3), nreg(_nreg)
-    {
-        RegId wvId(intRegClass, Wv);
-        setSrcRegIdx(0, wvId);
-    }
-
-    Fault execute(ExecContext *xc,
-                  trace::InstRecord *trace) const override;
-};
-
-
-/*** FADD ZA.H[Wv, off3], {Zm.H, ...} ***/
-class SmeFaddZaVecH : public ArmStaticInst
-{
-  protected:
-    RegIndex Wv;
-    RegIndex Zm;
-    uint8_t  off3;
-    uint8_t  nreg;
-
-  public:
-    SmeFaddZaVecH(ExtMachInst _machInst)
-      : ArmStaticInst("fadd_za_h", _machInst, SimdFloatAddOp),
-        Wv(0), Zm(0), off3(0), nreg(2)
-    {}
-
-    SmeFaddZaVecH(ExtMachInst _machInst,
-                  RegIndex _Wv,
-                  RegIndex _Zm,
-                  uint8_t _off3,
-                  uint8_t _nreg)
-      : ArmStaticInst("fadd_za_h", _machInst, SimdFloatAddOp),
-        Wv(_Wv), Zm(_Zm), off3(_off3), nreg(_nreg)
-    {
-        RegId wvId(intRegClass, Wv);
-        setSrcRegIdx(0, wvId);
-    }
-
-    Fault execute(ExecContext *xc,
-                  trace::InstRecord *trace) const override;
-};
-
 
 } // namespace ArmISA
 } // namespace gem5
