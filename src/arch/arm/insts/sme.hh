@@ -223,6 +223,30 @@ class SmeZeroOp : public ArmStaticInst
             Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
+// MOVA (vector to tile, two registers) — FEAT_SME2
+class SmeMovaVecToTile2RegsOp : public ArmStaticInst
+{
+  protected:
+    // Packed immediate produced by decode (your layout)
+    const uint64_t imm;
+    // Index register (Ws) used as WOp2 by the ISA parser
+    const RegIndex op2;
+    // V bit (0=horizontal, 1=vertical)
+    const bool v;
+
+  public:
+    SmeMovaVecToTile2RegsOp(const char *mnem, ExtMachInst machInst,
+                            OpClass opClass,
+                            uint64_t _imm, RegIndex _op2, bool _v)
+        : ArmStaticInst(mnem, machInst, opClass),
+          imm(_imm), op2(_op2), v(_v)
+    {}
+
+    std::string generateDisassembly(Addr pc,
+                                    const loader::SymbolTable *symtab) const override;
+};
+
+
 } // namespace ArmISA
 } // namespace gem5
 

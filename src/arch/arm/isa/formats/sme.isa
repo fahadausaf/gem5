@@ -59,6 +59,7 @@ namespace Aarch64
 
         StaticInstPtr decodeSmeMovaInsert(ExtMachInst);
         StaticInstPtr decodeSmeMovaExtract(ExtMachInst);
+        StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
 
         StaticInstPtr decodeSmeMisc(ExtMachInst);
             StaticInstPtr decodeSmeZero(ExtMachInst);
@@ -84,6 +85,14 @@ namespace Aarch64
     static inline bool isFtmopaWideningF16ToF32(uint32_t insn);
     static inline bool isFtmopaWideningF8ToF16(uint32_t insn);
     static inline bool isFtmopaWidening4WayF8ToF32(uint32_t insn);
+
+    static inline bool isMova2B(uint32_t insn);
+    static inline bool isMova2H(uint32_t insn);
+    static inline bool isMova2S(uint32_t insn);
+    static inline bool isMova2D(uint32_t insn);
+
+    StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
+
 
 
     // NOTE: This is called from a different decode tree (aarch64.isa).
@@ -118,6 +127,31 @@ namespace Aarch64
 
             return decodeSmeTmop(machInst);
         }
+
+
+
+        // ------------------------------------------------------------
+        // 2) MOVA (vector -> tile, TWO regs) — FEAT_SME2
+        //    Must be checked BEFORE the generic MOVA insert/extract routes
+        //    or it can be mis-decoded and crash in matrix.hh (tile index).
+        //
+        // From your objdump:
+        //   0xC004xxxx : mov za?h.b[...], {z?.b, z?.b}
+        //   0xC044xxxx : mov za?h.h[...], {z?.h, z?.h}
+        //   0xC084xxxx : mov za?h.s[...], {z?.s, z?.s}
+        //   0xC0C4xxxx : mov za?h.d[...], {z?.d, z?.d}
+        // We match on the high 16 bits.
+        // ------------------------------------------------------------
+        auto isMova2B = [](uint32_t x) -> bool { return (uint16_t)(x >> 16) == 0xC004u; };
+        auto isMova2H = [](uint32_t x) -> bool { return (uint16_t)(x >> 16) == 0xC044u; };
+        auto isMova2S = [](uint32_t x) -> bool { return (uint16_t)(x >> 16) == 0xC084u; };
+        auto isMova2D = [](uint32_t x) -> bool { return (uint16_t)(x >> 16) == 0xC0C4u; };
+
+        if (isMova2B(insn) || isMova2H(insn) || isMova2S(insn) || isMova2D(insn)) {
+            return decodeSmeMovaVecToTile2Regs(machInst);
+        }
+
+
 
 
         const uint8_t op0 = (uint8_t)bits(machInst, 30, 29);
@@ -310,6 +344,62 @@ namespace Aarch64
         constexpr uint32_t opcode_key = base_encoding & ~operand_mask;
 
         return (insn & ~operand_mask) == opcode_key;
+    }
+
+    static inline bool
+    isMova2B(uint32_t insn)
+    {
+        // operands: V(15), Rs(14-13), Zn(9-6), off3(2-0)
+        constexpr uint32_t operand_mask =
+            (1u << 15) | (0x3u << 13) | (0xFu << 6) | (0x7u << 0);
+
+        // From objdump: mov za0h.b[w12,0:1],{z0,z1} == 0xC0040000
+        constexpr uint32_t base = 0xC0040000u;
+        constexpr uint32_t key  = base & ~operand_mask;
+
+        return (insn & ~operand_mask) == key;
+    }
+
+    static inline bool
+    isMova2H(uint32_t insn)
+    {
+        // operands: V(15), Rs(14-13), Zn(9-6), ZAd(2), off2(1-0)
+        constexpr uint32_t operand_mask =
+            (1u << 15) | (0x3u << 13) | (0xFu << 6) | (1u << 2) | (0x3u << 0);
+
+        // From objdump: mov za0h.h[w12,0:1],{z2,z3} == 0xC0440040
+        constexpr uint32_t base = 0xC0440040u;
+        constexpr uint32_t key  = base & ~operand_mask;
+
+        return (insn & ~operand_mask) == key;
+    }
+
+    static inline bool
+    isMova2S(uint32_t insn)
+    {
+        // operands: V(15), Rs(14-13), Zn(9-6), ZAd(2-1), o1(0)
+        constexpr uint32_t operand_mask =
+            (1u << 15) | (0x3u << 13) | (0xFu << 6) | (0x3u << 1) | (1u << 0);
+
+        // From objdump: mov za0h.s[w12,0:1],{z4,z5} == 0xC0840080
+        constexpr uint32_t base = 0xC0840080u;
+        constexpr uint32_t key  = base & ~operand_mask;
+
+        return (insn & ~operand_mask) == key;
+    }
+
+    static inline bool
+    isMova2D(uint32_t insn)
+    {
+        // operands: V(15), Rs(14-13), Zn(9-6), ZAd(2-0) ; offset is implicit
+        constexpr uint32_t operand_mask =
+            (1u << 15) | (0x3u << 13) | (0xFu << 6) | (0x7u << 0);
+
+        // From objdump: mov za0h.d[w12,0:1],{z6,z7} == 0xC0C400C0
+        constexpr uint32_t base = 0xC0C400C0u;
+        constexpr uint32_t key  = base & ~operand_mask;
+
+        return (insn & ~operand_mask) == key;
     }
 
 
@@ -924,6 +1014,62 @@ namespace Aarch64
 
         return new Unknown64(machInst);
     }
+
+    StaticInstPtr
+    decodeSmeMovaVecToTile2Regs(ExtMachInst machInst)
+    {
+        const uint32_t insn = (uint32_t)machInst;
+
+        const bool V = (bool)bits(machInst, 15);
+        const RegIndex Ws = (RegIndex)(uint32_t)(bits(machInst, 14, 13) + 12);
+
+        // Zn group in encoding is bits[9:6]
+        const uint32_t zn_group = (uint32_t)bits(machInst, 9, 6);
+
+        // Pack imm for execute side (as your smeMovaVecToTile2RegsInst expects):
+        //   [ 2:0]  ZAd_raw
+        //   [ 7:3]  zn_group
+        //   [10:8]  off_field  (raw; execute expands to even by <<1)
+        //   [12:11] esize_code (0=B,1=H,2=S,3=D)
+        uint32_t ZAd_raw  = 0;
+        uint32_t off_raw  = 0;
+        uint32_t esz_code = 0;
+
+        if (isMova2B(insn)) {
+            // B: ZAd is implicitly 0, off3 is bits[2:0]
+            ZAd_raw  = 0;
+            off_raw  = (uint32_t)bits(machInst, 2, 0); // raw off_field
+            esz_code = 0; // B
+        } else if (isMova2H(insn)) {
+            // H: ZAd is bit[2], off2 is bits[1:0]
+            ZAd_raw  = (uint32_t)bits(machInst, 2, 2);
+            off_raw  = (uint32_t)bits(machInst, 1, 0);
+            esz_code = 1; // H
+        } else if (isMova2S(insn)) {
+            // S: ZAd is bits[2:1], off1 is bit[0]
+            ZAd_raw  = (uint32_t)bits(machInst, 2, 1);
+            off_raw  = (uint32_t)bits(machInst, 0, 0);
+            esz_code = 2; // S
+        } else if (isMova2D(insn)) {
+            // D: ZAd is bits[2:0], no offset field in encoding
+            ZAd_raw  = (uint32_t)bits(machInst, 2, 0);
+            off_raw  = 0;
+            esz_code = 3; // D
+        } else {
+            return new Unknown64(machInst);
+        }
+
+        const uint64_t immPacked =
+            ((uint64_t)(ZAd_raw  & 0x7)  << 0)  |
+            ((uint64_t)(zn_group & 0x1F) << 3)  |
+            ((uint64_t)(off_raw  & 0x7)  << 8)  |
+            ((uint64_t)(esz_code & 0x3)  << 11);
+
+        // Option B: ISA-parser generated instruction; constructor is (machInst, imm, op2, v)
+        return new SmeMovaVecToTile2Regs(machInst, immPacked, Ws, V);
+    }
+
+
 
     StaticInstPtr
     decodeSmeMisc(ExtMachInst machInst)

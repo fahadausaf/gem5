@@ -179,5 +179,20 @@ SmeZeroOp::generateDisassembly(Addr pc,
     return ss.str();
 }
 
+std::string
+SmeMovaVecToTile2RegsOp::generateDisassembly(
+    Addr pc, const loader::SymbolTable *symtab) const
+{
+    // Keep it simple and consistent with other SME disassembly:
+    // show mnemonic and operands in a minimal form.
+    std::stringstream ss;
+    printMnemonic(ss, "", false);
+    ss << " (imm=0x" << std::hex << imm << std::dec
+       << ", w" << op2
+       << ", v=" << (v ? 1 : 0) << ")";
+    return ss.str();
+}
+
+
 } // namespace ArmISA
 } // namespace gem5

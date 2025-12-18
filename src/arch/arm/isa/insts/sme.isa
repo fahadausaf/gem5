@@ -279,6 +279,118 @@ let {{
                          'class_name' : 'Sme' + Name}
             exec_output += SmeOpExecDeclare.subst(substDict)
 
+    def smeMovaVecToTile2RegsInst(name, Name, opClass):
+        global header_output, decoder_output, exec_output
+        code = smEnCheckCode + smeZaWrite + r'''
+            // Unpredicated MOVA: write two consecutive slices from two consecutive Z regs.
+            // imm packed by decodeSmeMovaVecToTile2Regs as:
+            //   [ 2:0]  ZAd_raw
+            //   [ 7:3]  zn_group
+            //   [10:8]  off_field   (raw; expand to even offset by <<1)
+            //   [12:11] esize_code  (0=B,1=H,2=S,3=D)
+            //
+            const uint32_t ZAd_raw  = (imm >> 0) & 0x7;
+            const uint32_t zn_group = (imm >> 3) & 0x1F;
+            const uint32_t off_raw  = (imm >> 8) & 0x7;
+            const uint32_t esz_code = (imm >> 11) & 0x3;
+
+            const bool vertical = v; // V bit: 0=H, 1=V
+
+            // Select element size in bytes
+            const uint32_t esize = 1u << esz_code; // B=1,H=2,S=4,D=8
+
+            // ZA tile index width depends on element size:
+            //   .b -> ZA0 only
+            //   .h -> ZA0..ZA1
+            //   .s -> ZA0..ZA3
+            //   .d -> ZA0..ZA7
+            uint32_t ZAd = ZAd_raw;
+            if (esz_code == 0)      ZAd &= 0u;
+            else if (esz_code == 1) ZAd &= 1u;
+            else if (esz_code == 2) ZAd &= 3u;
+            else                    ZAd &= 7u;
+
+            // slices = VL / esize
+            const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+            const uint32_t slices   = (VL_bytes / esize);
+
+            // Index register Ws is in WOp2 (as per your chosen op signature)
+            const uint32_t index = (uint32_t)WOp2;
+
+            // offset in spec is even: off_field * 2
+            const uint32_t offset_even = (off_raw << 1);
+
+            // Align to even slice start (nreg=2)
+            const uint32_t base_even = index - (index & 1u);
+
+            // Final slice modulo number of slices
+            const uint32_t slice0 = (base_even + offset_even) % slices;
+            const uint32_t slice1 = (slice0 + 1u) % slices;
+
+            // Source Z registers: n = UInt(Zn:'0') => 2*zn_group
+            const uint32_t z0_idx = (zn_group << 1);
+            const uint32_t z1_idx = (zn_group << 1) + 1u;
+
+            ArmISA::VecRegContainer z0, z1;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[z0_idx], &z0);
+            xc->tcBase()->getReg(ArmISA::vecRegClass[z1_idx], &z1);
+
+            auto writeSlice = [&](uint32_t slice, const ArmISA::VecRegContainer &zsrc) {
+                const uint8_t *zb = zsrc.as<uint8_t>();
+
+                if (!vertical) {
+                    if (esize == 1) {
+                        auto row = getTileHSlice<uint8_t>(ZA, ZAd, slice);
+                        for (uint32_t i = 0; i < slices; ++i) row[i] = zb[i];
+                    } else if (esize == 2) {
+                        auto row = getTileHSlice<uint16_t>(ZA, ZAd, slice);
+                        const uint16_t *p = (const uint16_t*)zb;
+                        for (uint32_t i = 0; i < slices; ++i) row[i] = p[i];
+                    } else if (esize == 4) {
+                        auto row = getTileHSlice<uint32_t>(ZA, ZAd, slice);
+                        const uint32_t *p = (const uint32_t*)zb;
+                        for (uint32_t i = 0; i < slices; ++i) row[i] = p[i];
+                    } else {
+                        auto row = getTileHSlice<uint64_t>(ZA, ZAd, slice);
+                        const uint64_t *p = (const uint64_t*)zb;
+                        for (uint32_t i = 0; i < slices; ++i) row[i] = p[i];
+                    }
+                } else {
+                    if (esize == 1) {
+                        auto col = getTileVSlice<uint8_t>(ZA, ZAd, slice);
+                        for (uint32_t i = 0; i < slices; ++i) col[i] = zb[i];
+                    } else if (esize == 2) {
+                        auto col = getTileVSlice<uint16_t>(ZA, ZAd, slice);
+                        const uint16_t *p = (const uint16_t*)zb;
+                        for (uint32_t i = 0; i < slices; ++i) col[i] = p[i];
+                    } else if (esize == 4) {
+                        auto col = getTileVSlice<uint32_t>(ZA, ZAd, slice);
+                        const uint32_t *p = (const uint32_t*)zb;
+                        for (uint32_t i = 0; i < slices; ++i) col[i] = p[i];
+                    } else {
+                        auto col = getTileVSlice<uint64_t>(ZA, ZAd, slice);
+                        const uint64_t *p = (const uint64_t*)zb;
+                        for (uint32_t i = 0; i < slices; ++i) col[i] = p[i];
+                    }
+                }
+            };
+
+            writeSlice(slice0, z0);
+            writeSlice(slice1, z1);
+        '''
+
+        iop = InstObjParams(
+            name,
+            "Sme" + Name,
+            "SmeMovaVecToTile2RegsOp",
+            {'code': code, 'op_class': opClass},
+            ['IsNonSpeculative']
+        )
+
+        header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
+        exec_output   += SmeExecute.subst(iop)
+
+    
     def smeMsrInst(name, Name, opClass, op):
         global header_output, decoder_output, exec_output
         code = '''
@@ -1402,6 +1514,10 @@ let {{
     smeMovaInsertInst("mova", "MovaInsert", 'MatrixMovOp',
                       ["uint8_t", "uint16_t", "uint32_t", "uint64_t",
                       "__uint128_t"])
+
+    # MOVA (vector to tile, two registers) — FEAT_SME2
+    smeMovaVecToTile2RegsInst("mova", "MovaVecToTile2Regs", "MatrixMovOp")
+
 
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')

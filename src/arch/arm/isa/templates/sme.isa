@@ -435,6 +435,29 @@ def template SmeMovaInsertDeclare {{
     };
 }};
 
+def template SmeMovaVecToTile2RegsDeclare {{
+    class %(class_name)s : public %(base_class)s
+    {
+      private:
+        %(reg_idx_arr_decl)s;
+
+      public:
+        /// Constructor.
+        %(class_name)s(ExtMachInst machInst, uint64_t imm,
+                       RegIndex op2, bool v)
+            : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                             imm, op2, v)
+        {
+            %(set_reg_idx_arr)s;
+            %(constructor)s;
+        }
+
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+    };
+}};
+
+
+
 def template SmeFPOPDeclare {{
     template <typename TPSElem, typename TPDElem>
     class %(class_name)s : public %(base_class)s
