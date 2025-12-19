@@ -43,6 +43,7 @@ let {{
     exec_output = ""
 
     header_output += "#include \"base/trace.hh\"\n";
+    header_output += "#include \"arch/arm/insts/fplib.hh\"\n";
 
     def smeAddInst(name, Name, opClass, types, op):
         global header_output, decoder_output, exec_output
@@ -390,7 +391,25 @@ let {{
         header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
         exec_output   += SmeExecute.subst(iop)
 
-    
+    def smeCvtMvInst(name, Name, opClass, custom_code=None):
+        global header_output, decoder_output, exec_output
+
+        # If caller supplies code, use it; otherwise use default stub.
+        if custom_code is None:
+            custom_code = r'''
+                panic("smeCvtMvInst used without custom_code");
+            '''
+
+        code = smEnCheckCodeNoZA + custom_code
+
+        iop = InstObjParams(name, "Sme" + Name, "SmeCvtMvOp",
+                            {'code': code, 'op_class': opClass},
+                            ['IsNonSpeculative'])
+
+        header_output += SmeCvtMvDeclare.subst(iop)
+        exec_output   += SmeExecute.subst(iop)
+
+
     def smeMsrInst(name, Name, opClass, op):
         global header_output, decoder_output, exec_output
         code = '''
@@ -1518,6 +1537,55 @@ let {{
     # MOVA (vector to tile, two registers) — FEAT_SME2
     smeMovaVecToTile2RegsInst("mova", "MovaVecToTile2Regs", "MatrixMovOp")
 
+    # SCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
+    scvtfCode = r'''
+        // SME2 multi-vector SCVTF: signed int32 lanes -> FP32 (result bits in Z regs)
+        FPSCR fpscr = (FPSCR)Fpscr;
+        const auto rnd = FPCRRounding(fpscr);
+
+        // imm layout (as you described / assumed in smeCvtMvInst):
+        //   [ 4:0]  d_group
+        //   [ 9:5]  n_group
+        //   [11:10] nreg_code   (0 => 2 regs, else 4 regs)
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t d_group   = (raw >> 0) & 0x1F;
+        const uint32_t n_group   = (raw >> 5) & 0x1F;
+        const uint32_t nreg_code = (raw >> 10) & 0x3;
+        const uint32_t nreg      = (nreg_code == 0) ? 2 : 4;
+
+        // Expand group indices to actual Z register indices
+        const uint32_t zd_base = d_group * nreg;
+        const uint32_t zn_base = n_group * nreg;
+
+        // Number of 32-bit lanes in the current SME vector length
+        const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+        const uint32_t elements = VL_bytes / 4;
+
+        for (uint32_t r = 0; r < nreg; ++r) {
+            const uint32_t zn_idx = zn_base + r;
+            const uint32_t zd_idx = zd_base + r;
+
+            ArmISA::VecRegContainer zn, zd;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zn_idx], &zn);
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
+
+            const int32_t *in  = (const int32_t*)zn.as<uint8_t>();
+            uint32_t *out      = (uint32_t*)zd.as<uint8_t>();
+
+            for (uint32_t e = 0; e < elements; ++e) {
+                int64_t s  = (int64_t)in[e];     // preserve sign
+                uint64_t op = (uint64_t)s;       // pass as 64-bit payload
+                out[e] = ArmISA::fplibFixedToFP<uint32_t>(op, 0, false, rnd, fpscr);
+            }
+
+
+            xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+        }
+    '''
+
+    
+    # SCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
+    smeCvtMvInst("scvtf", "ScvtfMv", "SimdFloatCvtOp", scvtfCode)
 
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')

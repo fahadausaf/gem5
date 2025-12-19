@@ -61,6 +61,8 @@ namespace Aarch64
         StaticInstPtr decodeSmeMovaExtract(ExtMachInst);
         StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
 
+        StaticInstPtr decodeSmeCvt(ExtMachInst);
+
         StaticInstPtr decodeSmeMisc(ExtMachInst);
             StaticInstPtr decodeSmeZero(ExtMachInst);
 
@@ -90,6 +92,10 @@ namespace Aarch64
     static inline bool isMova2H(uint32_t insn);
     static inline bool isMova2S(uint32_t insn);
     static inline bool isMova2D(uint32_t insn);
+
+    static inline bool isSme2Scvtf2(uint32_t insn);
+    static inline bool isSme2Scvtf4(uint32_t insn);
+
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
 
@@ -152,7 +158,9 @@ namespace Aarch64
         }
 
 
-
+        if (isSme2Scvtf2(insn) || isSme2Scvtf4(insn)) {
+            return decodeSmeCvt(machInst);
+        }
 
         const uint8_t op0 = (uint8_t)bits(machInst, 30, 29);
         const uint8_t op1 = (uint8_t)bits(machInst, 24, 19);
@@ -402,6 +410,20 @@ namespace Aarch64
         return (insn & ~operand_mask) == key;
     }
 
+    static inline bool
+    isSme2Scvtf2(uint32_t insn)
+    {
+        // Matches encodings like 0xC122E002 (2-reg form)
+        // Only low 10 bits vary with register selection (Zd[4:0], Zn[9:5]).
+        return (insn & 0xfffffc00u) == 0xC122E000u;
+    }
+
+    static inline bool
+    isSme2Scvtf4(uint32_t insn)
+    {
+        // Matches encodings like 0xC132E088 (4-reg form)
+        return (insn & 0xfffffc00u) == 0xC132E000u;
+    }
 
 
     StaticInstPtr
@@ -415,6 +437,11 @@ namespace Aarch64
         // ---- TEMP DEBUG fast-path: fmopa za0.h, p0/m, p1/m, z0.b, z1.b ----
         // encoding bytes: [0x08, 0x20, 0xA1, 0x80] => 0x80A12008
         const uint32_t insn = (uint32_t)machInst;
+
+        if (isSme2Scvtf2(insn) || isSme2Scvtf4(insn)) {
+            return decodeSmeCvt(machInst); // new decoder helper you add
+        }
+
         if (insn == 0x80A12008) {
             DPRINTF(Decode, "SME.F8 fastpath hit: insn=%#010x\n", insn);
             return decodeSmeOpF8(machInst);
@@ -1069,7 +1096,29 @@ namespace Aarch64
         return new SmeMovaVecToTile2Regs(machInst, immPacked, Ws, V);
     }
 
+    StaticInstPtr
+    decodeSmeCvt(ExtMachInst machInst)
+    {
+        const uint32_t insn = (uint32_t)machInst;
 
+        const bool is4 = isSme2Scvtf4(insn);
+        const int nreg = is4 ? 4 : 2;
+
+        // For both 2-reg and 4-reg forms, GNU as encodes the base as a normal
+        // 5-bit Z register number:
+        //   Zn_base = bits[9:5]
+        //   Zd_base = bits[4:0]
+        const uint32_t n_base = (uint32_t)bits(machInst, 9, 5);
+        const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
+
+        // Pack imm: [7:0]=d_base, [15:8]=n_base, [17:16]=nreg_code (2->0,4->1)
+        uint64_t imm = 0;
+        imm |= (uint64_t)(d_base & 0xFF);
+        imm |= (uint64_t)((n_base & 0xFF) << 8);
+        imm |= (uint64_t)((is4 ? 1 : 0) << 16);
+
+        return new SmeScvtfMv(machInst, imm);
+    }
 
     StaticInstPtr
     decodeSmeMisc(ExtMachInst machInst)

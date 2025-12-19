@@ -246,6 +246,22 @@ class SmeMovaVecToTile2RegsOp : public ArmStaticInst
                                     const loader::SymbolTable *symtab) const override;
 };
 
+class SmeCvtMvOp : public ArmStaticInst
+{
+  protected:
+    uint64_t imm;
+
+    SmeCvtMvOp(const char *mnem, ExtMachInst _machInst,
+               OpClass __opClass, uint64_t _imm) :
+        ArmStaticInst(mnem, _machInst, __opClass),
+        imm(_imm)
+    {}
+
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
+};
+
+
 
 } // namespace ArmISA
 } // namespace gem5

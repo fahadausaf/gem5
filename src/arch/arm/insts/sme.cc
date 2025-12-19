@@ -193,6 +193,17 @@ SmeMovaVecToTile2RegsOp::generateDisassembly(
     return ss.str();
 }
 
+std::string
+SmeCvtMvOp::generateDisassembly(Addr pc,
+                                const loader::SymbolTable *symtab) const
+{
+    std::stringstream ss;
+    printMnemonic(ss, "", false);
+    ss << " (imm=0x" << std::hex << imm << std::dec << ")";
+    return ss.str();
+}
+
+
 
 } // namespace ArmISA
 } // namespace gem5
