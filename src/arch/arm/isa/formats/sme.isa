@@ -96,6 +96,9 @@ namespace Aarch64
     static inline bool isSme2Scvtf2(uint32_t insn);
     static inline bool isSme2Scvtf4(uint32_t insn);
 
+    static inline bool isSme2Ucvtf2(uint32_t insn);
+    static inline bool isSme2Ucvtf4(uint32_t insn);
+
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
 
@@ -158,7 +161,8 @@ namespace Aarch64
         }
 
 
-        if (isSme2Scvtf2(insn) || isSme2Scvtf4(insn)) {
+        if (isSme2Scvtf2(insn) || isSme2Scvtf4(insn) ||
+            isSme2Ucvtf2(insn) || isSme2Ucvtf4(insn)) {
             return decodeSmeCvt(machInst);
         }
 
@@ -425,6 +429,19 @@ namespace Aarch64
         return (insn & 0xfffffc00u) == 0xC132E000u;
     }
 
+    static inline bool
+    isSme2Ucvtf2(uint32_t insn)
+    {
+        // Matches 2-reg UCVTF (Bit 10 set)
+        return (insn & 0xfffffc00u) == 0xC122E400u;
+    }
+
+    static inline bool
+    isSme2Ucvtf4(uint32_t insn)
+    {
+        // Matches 4-reg UCVTF (Bit 10 set)
+        return (insn & 0xfffffc00u) == 0xC132E400u;
+    }
 
     StaticInstPtr
     decodeSmeOp32(ExtMachInst machInst)
@@ -438,8 +455,9 @@ namespace Aarch64
         // encoding bytes: [0x08, 0x20, 0xA1, 0x80] => 0x80A12008
         const uint32_t insn = (uint32_t)machInst;
 
-        if (isSme2Scvtf2(insn) || isSme2Scvtf4(insn)) {
-            return decodeSmeCvt(machInst); // new decoder helper you add
+        if (isSme2Scvtf2(insn) || isSme2Scvtf4(insn) ||
+            isSme2Ucvtf2(insn) || isSme2Ucvtf4(insn)) {
+            return decodeSmeCvt(machInst);
         }
 
         if (insn == 0x80A12008) {
@@ -1100,24 +1118,31 @@ namespace Aarch64
     decodeSmeCvt(ExtMachInst machInst)
     {
         const uint32_t insn = (uint32_t)machInst;
+        
+        // Detect 4-register variant
+        const bool is4 = isSme2Scvtf4(insn) || isSme2Ucvtf4(insn); // (Assuming you might add specific matchers, or just use the existing logic)
+        // A safer check using the existing matchers which cover both:
+        const bool isScvtf4_mask = (insn & 0xfffffc00u) == 0xC132E000u;
+        const bool is4_reg = isScvtf4_mask;
 
-        const bool is4 = isSme2Scvtf4(insn);
-        const int nreg = is4 ? 4 : 2;
+        // Check Bit 5 for Unsigned (UCVTF) vs Signed (SCVTF)
+        const bool isUnsigned = (bool)bits(machInst, 5);
 
-        // For both 2-reg and 4-reg forms, GNU as encodes the base as a normal
-        // 5-bit Z register number:
-        //   Zn_base = bits[9:5]
-        //   Zd_base = bits[4:0]
-        const uint32_t n_base = (uint32_t)bits(machInst, 9, 5);
+        // Zn is bits 9-6 (4 bits), Zd is bits 4-0 (5 bits)
+        const uint32_t n_base = (uint32_t)bits(machInst, 9, 6);
         const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
 
         // Pack imm: [7:0]=d_base, [15:8]=n_base, [17:16]=nreg_code (2->0,4->1)
         uint64_t imm = 0;
         imm |= (uint64_t)(d_base & 0xFF);
         imm |= (uint64_t)((n_base & 0xFF) << 8);
-        imm |= (uint64_t)((is4 ? 1 : 0) << 16);
+        imm |= (uint64_t)((is4_reg ? 1 : 0) << 16);
 
-        return new SmeScvtfMv(machInst, imm);
+        if (isUnsigned) {
+            return new SmeUcvtfMv(machInst, imm);
+        } else {
+            return new SmeScvtfMv(machInst, imm);
+        }
     }
 
     StaticInstPtr
