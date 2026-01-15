@@ -87,6 +87,7 @@ namespace Aarch64
     static inline bool isFtmopaWideningF16ToF32(uint32_t insn);
     static inline bool isFtmopaWideningF8ToF16(uint32_t insn);
     static inline bool isFtmopaWidening4WayF8ToF32(uint32_t insn);
+    static inline bool isFmop4aWidening(uint32_t insn);
 
     static inline bool isMova2B(uint32_t insn);
     static inline bool isMova2H(uint32_t insn);
@@ -147,6 +148,16 @@ namespace Aarch64
             
             // Call the new instruction
             return new SmeFmop4a<uint32_t, uint32_t>(machInst, ZAda, Zn, Zm);
+        }
+
+        // Check for FMOP4A (Widening, 4-way)
+        if (isFmop4aWidening(insn)) {
+            const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+            const RegIndex Zn = (RegIndex)(uint32_t)bits(machInst, 9, 5);
+            const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0);
+
+            // Instantiate Widening version: Input uint8_t, Output uint32_t
+            return new SmeFmop4aWidening<uint8_t, uint32_t>(machInst, ZAda, Zn, Zm);
         }
 
 
@@ -386,6 +397,22 @@ namespace Aarch64
         constexpr uint32_t base_encoding = 0xC0800000; 
 
         return (insn & ~operand_mask) == base_encoding;
+    }
+
+    // FMOP4A (Widening)
+    static inline bool
+    isFmop4aWidening(uint32_t insn)
+    {
+        // Operands: Zm(20-16), Zn(9-5), ZAda(1-0) are masked out.
+        // We also check bits [15:10] and [4] as our unique signature.
+        constexpr uint32_t mask = 
+            (0x1F << 16) | (0x1F << 5) | (0x3 << 0);
+            
+        // Opcode: 0xC000FC10
+        // Top 11 bits (31-21): 0xC00 (Matches SmeControl/Zero range)
+        // Bits 15-10: 0x3F (All 1s, distinct from MOVA)
+        // Bit 4: 1
+        return (insn & ~mask) == 0xC000FC10;
     }
 
     static inline bool

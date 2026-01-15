@@ -1560,6 +1560,69 @@ let {{
     smeFmop4aInst('fmop4a', 'Fmop4a', 'MatrixOPOp', ['uint32_t, uint32_t'], fmop4aCode)
 
 
+    # FMOP4A (widening, 4-way) Implementation
+    # FMOP4A <ZAda>.S, <Zn>.B, <Zm>.B
+    fmop4aWideningCode = r'''
+        auto tile = getTile<TPDElem>(ZA, imm);
+        FPSCR fpscr = (FPSCR) Fpscr;
+
+        // FP8 (byte) -> FP32 bits conversion stub (Reuse of existing logic)
+        //   sign = 0, exponent = 127 (bias), mantissa places the 8 FP8 bits high in 23-bit field.
+        auto fp8_to_fp32_bits = [](uint8_t b) -> uint32_t {
+            if (b == 0) return 0u; // preserve zero
+            uint32_t mant = static_cast<uint32_t>(b & 0xFFu) << 15; // 8 bits into high mantissa
+            uint32_t exp  = 127u; // normal exponent
+            return (exp << 23) | mant;
+        };
+
+        auto widen = [&](uint8_t b) -> TPDElem {
+            return static_cast<TPDElem>(fp8_to_fp32_bits(b));
+        };
+
+        DPRINTF(Arm, "SmeFmop4aWidening: Executing over SVL elements (eCount=%d)\n", eCount);
+
+        // eCount is the number of 32-bit (TPDElem) elements in the vector (SVL / 4).
+        // Each 32-bit element in Zn/Zm contains 4 packed FP8 values.
+        for (int j = 0; j < eCount; ++j) {
+            // Retrieve the j-th 32-bit container from Zn (containing 4 FP8 bytes)
+            uint32_t zn_chunk = AA64FpOp1_xd[j];
+
+            for (int i = 0; i < eCount; ++i) {
+                // Retrieve the i-th 32-bit container from Zm (containing 4 FP8 bytes)
+                uint32_t zm_chunk = AA64FpOp2_xd[i];
+
+                TPDElem acc = tile[j][i];
+
+                // 4-way accumulation
+                for (int k = 0; k < 4; ++k) {
+                    // Extract byte k from the 32-bit chunk
+                    uint8_t n_byte = (zn_chunk >> (8 * k)) & 0xFF;
+                    uint8_t m_byte = (zm_chunk >> (8 * k)) & 0xFF;
+
+                    // Widen to FP32
+                    TPDElem val1 = widen(n_byte);
+                    TPDElem val2 = widen(m_byte);
+
+                    // Multiply and Accumulate
+                    TPDElem res = fplibMul(val1, val2, fpscr);
+                    acc = fplibAdd(acc, res, fpscr);
+                }
+                
+                // Write back accumulator
+                tile[j][i] = acc;
+                
+                // Optional Debug Trace
+                if (j == 0 && i == 0) {
+                     DPRINTF(Arm, "SmeFmop4aWidening[0][0]: Zn_chunk=0x%x, Zm_chunk=0x%x, NewZA=0x%x\n", 
+                             zn_chunk, zm_chunk, acc);
+                }
+            }
+        }
+    '''
+
+    # Instantiate FMOP4A Widening: FP8 (uint8_t) -> FP32 (uint32_t)
+    smeFmop4aInst('fmop4a_widening', 'Fmop4aWidening', 'MatrixOPOp', ['uint8_t, uint32_t'], fmop4aWideningCode)
+
 
     # LD1B
     smeLd1xInst('ld1b', 'Ld1b', 'MemReadOp', ['uint8_t'])
