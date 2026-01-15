@@ -1502,6 +1502,63 @@ let {{
     smeFPOPInst("fmopa", "FmopaWidening4WayF8F32", "MatrixOPOp",
             ["uint8_t"], ["uint32_t"], wideningFmopx4WayF8Code)
 
+    # FMOP4A (non-widening) Handler
+    def smeFmop4aInst(name, Name, opClass, types, op):
+        global header_output, decoder_output, exec_output
+        code = smEnCheckCode + smeZaWrite + '''
+            // imm stores the tile index (ZAda)
+            // op1 is Zn (Source 1)
+            // op2 is Zm (Source 2)
+
+            unsigned eCount = ArmStaticInst::getCurSmeVecLen<TPDElem>(
+                xc->tcBase());
+        '''
+        code += op
+
+        iop = InstObjParams(name, "Sme" + Name, "SmeFmop4aOp",
+                            {'code': code, 'op_class': opClass},
+                            ['IsNonSpeculative'])
+        header_output += SmeFmop4aDeclare.subst(iop)
+        exec_output += SmeDualTemplatedExecute.subst(iop) 
+
+        for type in types:
+            substDict = {'targs' : type,
+                         'class_name' : 'Sme' + Name}
+            exec_output += SmeOpExecDeclare.subst(substDict)
+
+    # FMOP4A (non-widening) Implementation with Debug Traces
+    fmop4aCode = '''
+        auto tile = getTile<TPDElem>(ZA, imm);
+        FPSCR fpscr = (FPSCR) Fpscr;
+
+        // Debug trace (using double backslash for safety)
+        DPRINTF(Arm, "SmeFmop4a: Executing over SVL elements (eCount=%d)\\n", eCount);
+
+        for (int j = 0; j < eCount; ++j) {
+            TPDElem val1 = AA64FpOp1_xd[j]; // Zn[j]
+
+            for (int i = 0; i < eCount; ++i) {
+                TPDElem val2 = AA64FpOp2_xd[i]; // Zm[i]
+
+                // Read current ZA value for debug
+                TPDElem old_za = tile[j][i];
+
+                // Perform Math: ZA += Zn * Zm
+                TPDElem res = fplibMul(val1, val2, fpscr);
+                tile[j][i] = fplibAdd(tile[j][i], res, fpscr);
+
+                // Trace the first element (0,0) specifically
+                if (j == 0 && i == 0) {
+                     DPRINTF(Arm, "SmeFmop4a[0][0]: Zn=0x%x, Zm=0x%x, OldZA=0x%x -> NewZA=0x%x\\n", val1, val2, old_za, tile[j][i]);
+                }
+            }
+        }
+    '''
+    
+    # Instantiate FMOP4A for float32 (TPDElem = uint32_t)
+    # Note: SME2 usually treats inputs/outputs as same type for non-widening
+    smeFmop4aInst('fmop4a', 'Fmop4a', 'MatrixOPOp', ['uint32_t, uint32_t'], fmop4aCode)
+
 
 
     # LD1B

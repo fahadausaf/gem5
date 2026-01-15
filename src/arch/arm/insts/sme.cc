@@ -157,6 +157,20 @@ SmeOPOp::generateDisassembly(Addr pc,
 }
 
 std::string
+SmeFmop4aOp::generateDisassembly(Addr pc,
+                             const loader::SymbolTable *symtab) const
+{
+    std::stringstream ss;
+    printMnemonic(ss, "", false);
+    ccprintf(ss, "#%d", imm); // ZAda tile
+    ss << ", ";
+    printVecReg(ss, op1, true); // Zn
+    ss << ", ";
+    printVecReg(ss, op2, true); // Zm
+    return ss.str();
+}
+
+std::string
 SmeRdsvlOp::generateDisassembly(Addr pc,
                                 const loader::SymbolTable *symtab) const
 {

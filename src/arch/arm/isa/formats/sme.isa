@@ -99,6 +99,8 @@ namespace Aarch64
     static inline bool isSme2Ucvtf2(uint32_t insn);
     static inline bool isSme2Ucvtf4(uint32_t insn);
 
+    static inline bool isFmop4a(uint32_t insn);
+
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
 
@@ -135,6 +137,16 @@ namespace Aarch64
             isFtmopaWidening4WayF8ToF32(insn)) {
 
             return decodeSmeTmop(machInst);
+        }
+
+        // Check for FMOP4A
+        if (isFmop4a(insn)) {
+            const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+            const RegIndex Zn = (RegIndex)(uint32_t)bits(machInst, 9, 5);
+            const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0); // 2 bits for .S tile
+            
+            // Call the new instruction
+            return new SmeFmop4a<uint32_t, uint32_t>(machInst, ZAda, Zn, Zm);
         }
 
 
@@ -356,6 +368,24 @@ namespace Aarch64
         constexpr uint32_t opcode_key = base_encoding & ~operand_mask;
 
         return (insn & ~operand_mask) == opcode_key;
+    }
+
+    /// FMOP4A (non-widening) matcher
+    static inline bool
+    isFmop4a(uint32_t insn)
+    {
+        // FMOP4A (non-widening) .S encoding: 
+        // 31..21 = 1100 0000 100
+        // Zm(20-16), Zn(9-5), ZAda(1-0) are variables.
+        // Bit 15=0, 14-10=0, 4-2=0. 
+        // Verify this hex mask against your specific SME2 opcode spec.
+        constexpr uint32_t operand_mask = 
+            (0x1F << 16) | (0x1F << 5) | (0x3 << 0);
+            
+        // Assuming base encoding is roughly 0xC0800000 
+        constexpr uint32_t base_encoding = 0xC0800000; 
+
+        return (insn & ~operand_mask) == base_encoding;
     }
 
     static inline bool

@@ -190,6 +190,24 @@ class SmeOPOp : public ArmStaticInst
             Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
+// Used for SME2 FMOP4A (Unpredicated Outer Product)
+class SmeFmop4aOp : public ArmStaticInst
+{
+  protected:
+    uint64_t imm; // Stores ZAda tile index
+    RegIndex op1; // Zn
+    RegIndex op2; // Zm
+
+    SmeFmop4aOp(const char *mnem, ExtMachInst _machInst, OpClass __opClass,
+            uint64_t _imm, RegIndex _op1, RegIndex _op2) :
+        ArmStaticInst(mnem, _machInst, __opClass),
+        imm(_imm), op1(_op1), op2(_op2)
+    {}
+
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
+};
+
 // Used for the SME RDSVL instruction
 class SmeRdsvlOp : public ArmStaticInst
 {
