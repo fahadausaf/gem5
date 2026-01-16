@@ -1623,6 +1623,69 @@ let {{
     # Instantiate FMOP4A Widening: FP8 (uint8_t) -> FP32 (uint32_t)
     smeFmop4aInst('fmop4a_widening', 'Fmop4aWidening', 'MatrixOPOp', ['uint8_t, uint32_t'], fmop4aWideningCode)
 
+    # FMOP4A (widening, 2-way, FP16 -> FP32) Implementation
+    # FMOP4A <ZAda>.S, <Zn>.H, <Zm>.H
+    fmop4aWideningF16Code = r'''
+        auto tile = getTile<TPDElem>(ZA, imm);
+        FPSCR fpscr = (FPSCR) Fpscr;
+        const auto rnd = FPCRRounding(fpscr);
+
+        DPRINTF(Arm, "SmeFmop4aWideningF16: Executing over SVL elements (eCount=%d)\n", eCount);
+
+        // Access Source Registers (Zn, Zm) as FP16 (uint16_t)
+        ArmISA::VecRegContainer zn, zm;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op1], &zn);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op2], &zm);
+        const TPSElem *zn_ptr = zn.as<TPSElem>();
+        const TPSElem *zm_ptr = zm.as<TPSElem>();
+
+        // eCount is the number of 32-bit (TPDElem) elements in the vector (SVL / 4).
+        // The loop iterates over the destination tile dimensions (FP32).
+        for (int j = 0; j < eCount; ++j) {
+            // For 2-way widening, we consume 2 FP16 elements for every 1 FP32 row.
+            // Row j corresponds to Zn indices [2*j] and [2*j + 1].
+            TPSElem zn0 = zn_ptr[2 * j];
+            TPSElem zn1 = zn_ptr[2 * j + 1];
+
+            // Convert inputs to FP32
+            TPDElem val_n0 = fplibConvert<TPSElem, TPDElem>(zn0, rnd, fpscr);
+            TPDElem val_n1 = fplibConvert<TPSElem, TPDElem>(zn1, rnd, fpscr);
+
+            for (int i = 0; i < eCount; ++i) {
+                // Column i corresponds to Zm indices [2*i] and [2*i + 1].
+                TPSElem zm0 = zm_ptr[2 * i];
+                TPSElem zm1 = zm_ptr[2 * i + 1];
+
+                // Convert inputs to FP32
+                TPDElem val_m0 = fplibConvert<TPSElem, TPDElem>(zm0, rnd, fpscr);
+                TPDElem val_m1 = fplibConvert<TPSElem, TPDElem>(zm1, rnd, fpscr);
+
+                TPDElem acc = tile[j][i];
+
+                // Accumulate first product
+                TPDElem prod0 = fplibMul(val_n0, val_m0, fpscr);
+                acc = fplibAdd(acc, prod0, fpscr);
+
+                // Accumulate second product
+                TPDElem prod1 = fplibMul(val_n1, val_m1, fpscr);
+                acc = fplibAdd(acc, prod1, fpscr);
+
+                // Write back
+                tile[j][i] = acc;
+
+                // Optional Debug Trace for top-left element
+                if (j == 0 && i == 0) {
+                     DPRINTF(Arm, "SmeFmop4aWideningF16[0][0]: Zn={0x%x, 0x%x}, Zm={0x%x, 0x%x}, NewZA=0x%x\n", 
+                             zn0, zn1, zm0, zm1, acc);
+                }
+            }
+        }
+    '''
+
+    # Instantiate FMOP4A Widening: FP16 (uint16_t) -> FP32 (uint32_t)
+    # Note: We pass the template types explicitly as a single string pair for the targs substitution
+    smeFmop4aInst('fmop4a_widening_f16', 'Fmop4aWideningF16', 'MatrixOPOp', ['uint16_t, uint32_t'], fmop4aWideningF16Code)
+
 
     # LD1B
     smeLd1xInst('ld1b', 'Ld1b', 'MemReadOp', ['uint8_t'])

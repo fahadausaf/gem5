@@ -5,7 +5,9 @@
 // not be construed as granting a license to any other intellectual
 // property including but not limited to intellectual property relating
 // to a hardware implementation of the functionality of the software
-// licensed hereunder.  You may use the software subject to the license
+// licensed hereunder.
+//
+// You may use the software subject to the license
 // terms below provided that you ensure that this notice is replicated
 // unmodified and in its entirety in all distributions of the software,
 // modified or unmodified, in source code or in binary form.
@@ -62,7 +64,6 @@ namespace Aarch64
         StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
 
         StaticInstPtr decodeSmeCvt(ExtMachInst);
-
         StaticInstPtr decodeSmeMisc(ExtMachInst);
             StaticInstPtr decodeSmeZero(ExtMachInst);
 
@@ -88,6 +89,7 @@ namespace Aarch64
     static inline bool isFtmopaWideningF8ToF16(uint32_t insn);
     static inline bool isFtmopaWidening4WayF8ToF32(uint32_t insn);
     static inline bool isFmop4aWidening(uint32_t insn);
+    static inline bool isFmop4aWideningF16(uint32_t insn);
 
     static inline bool isMova2B(uint32_t insn);
     static inline bool isMova2H(uint32_t insn);
@@ -104,9 +106,6 @@ namespace Aarch64
 
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
-
-
-
     // NOTE: This is called from a different decode tree (aarch64.isa).
     // For neatness and clarity we keep the code here order to keep all
     // SME things together.
@@ -114,7 +113,6 @@ namespace Aarch64
     decodeSmeMgmt(ExtMachInst machInst)
     {
         const uint8_t imm = (uint8_t)bits(machInst, 10, 8);
-
         if (bits(machInst, 8)) {
             return new SmeSmstart(machInst, imm);
         } else {
@@ -128,82 +126,89 @@ namespace Aarch64
         // Starting point for decoding: bits 31:25=1xx0000
 
         const uint32_t insn = (uint32_t)machInst;
-
         // Route *all* FTMOPA TMOP encodings (non-widening + widening)
         // straight to the TMOP decoder.
-        if (isFtmopaNonWideningF16(insn) ||
-            isFtmopaNonWideningF32(insn) ||
-            isFtmopaWideningF16ToF32(insn) ||
-            isFtmopaWideningF8ToF16(insn)  ||
-            isFtmopaWidening4WayF8ToF32(insn)) {
+        if (Aarch64::isFtmopaNonWideningF16(insn) ||
+            Aarch64::isFtmopaNonWideningF32(insn) ||
+            Aarch64::isFtmopaWideningF16ToF32(insn) ||
+            Aarch64::isFtmopaWideningF8ToF16(insn)  ||
+            Aarch64::isFtmopaWidening4WayF8ToF32(insn)) {
 
-            return decodeSmeTmop(machInst);
+            return Aarch64::decodeSmeTmop(machInst);
         }
 
         // Check for FMOP4A
-        if (isFmop4a(insn)) {
+        if (Aarch64::isFmop4a(insn)) {
             const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
             const RegIndex Zn = (RegIndex)(uint32_t)bits(machInst, 9, 5);
-            const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0); // 2 bits for .S tile
+            const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0);
+            // 2 bits for .S tile
             
             // Call the new instruction
             return new SmeFmop4a<uint32_t, uint32_t>(machInst, ZAda, Zn, Zm);
         }
 
-        // Check for FMOP4A (Widening, 4-way)
-        if (isFmop4aWidening(insn)) {
+        // Check for FMOP4A (Widening, 4-way, FP8 -> FP32)
+        if (Aarch64::isFmop4aWidening(insn)) {
             const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
             const RegIndex Zn = (RegIndex)(uint32_t)bits(machInst, 9, 5);
             const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0);
-
             // Instantiate Widening version: Input uint8_t, Output uint32_t
             return new SmeFmop4aWidening<uint8_t, uint32_t>(machInst, ZAda, Zn, Zm);
         }
 
-
+        // Check for FMOP4A (Widening, 2-way, FP16 -> FP32)
+        if (Aarch64::isFmop4aWideningF16(insn)) {
+             const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+             const RegIndex Zn = (RegIndex)(uint32_t)bits(machInst, 9, 5);
+             const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0); // 2 bits for .S tile
+             return new SmeFmop4aWideningF16<uint16_t, uint32_t>(machInst, ZAda, Zn, Zm);
+        }
 
         // ------------------------------------------------------------
         // 2) MOVA (vector -> tile, TWO regs) — FEAT_SME2
         //    Must be checked BEFORE the generic MOVA insert/extract routes
         //    or it can be mis-decoded and crash in matrix.hh (tile index).
         //
-        // From your objdump:
+        // From objdump:
         //   0xC004xxxx : mov za?h.b[...], {z?.b, z?.b}
         //   0xC044xxxx : mov za?h.h[...], {z?.h, z?.h}
         //   0xC084xxxx : mov za?h.s[...], {z?.s, z?.s}
         //   0xC0C4xxxx : mov za?h.d[...], {z?.d, z?.d}
         // We match on the high 16 bits.
         // ------------------------------------------------------------
+        // Note: Lambdas inside methods might not need qualification if generic,
+        // but explicit methods called below do.
         auto isMova2B = [](uint32_t x) -> bool { return (uint16_t)(x >> 16) == 0xC004u; };
         auto isMova2H = [](uint32_t x) -> bool { return (uint16_t)(x >> 16) == 0xC044u; };
         auto isMova2S = [](uint32_t x) -> bool { return (uint16_t)(x >> 16) == 0xC084u; };
         auto isMova2D = [](uint32_t x) -> bool { return (uint16_t)(x >> 16) == 0xC0C4u; };
-
+        
         if (isMova2B(insn) || isMova2H(insn) || isMova2S(insn) || isMova2D(insn)) {
-            return decodeSmeMovaVecToTile2Regs(machInst);
+            return Aarch64::decodeSmeMovaVecToTile2Regs(machInst);
         }
 
 
-        if (isSme2Scvtf2(insn) || isSme2Scvtf4(insn) ||
-            isSme2Ucvtf2(insn) || isSme2Ucvtf4(insn)) {
-            return decodeSmeCvt(machInst);
+        if (Aarch64::isSme2Scvtf2(insn) || Aarch64::isSme2Scvtf4(insn) ||
+            Aarch64::isSme2Ucvtf2(insn) || Aarch64::isSme2Ucvtf4(insn)) {
+            return Aarch64::decodeSmeCvt(machInst);
         }
 
         const uint8_t op0 = (uint8_t)bits(machInst, 30, 29);
         const uint8_t op1 = (uint8_t)bits(machInst, 24, 19);
         const uint8_t op2 = (uint8_t)bits(machInst, 17);
         const uint8_t op3 = (uint8_t)bits(machInst, 4, 2);
-
+        
         if ((op0 & 0b10) == 0b00) {
             if ((op1 & 0b011000) == 0b010000) {
                 if ((op3 & 0b001) == 0b000) {
-                    return decodeSmeOp32(machInst);
+                    return Aarch64::decodeSmeOp32(machInst);
                 }
             }
 
             if ((op1 & 0b011000) == 0b011000) {
                 if ((op3 & 0b010) == 0b000) {
-                    return decodeSmeOp64(machInst);
+                    return Aarch64::decodeSmeOp64(machInst);
                 }
             }
         }
@@ -212,28 +217,28 @@ namespace Aarch64
             if ((op1 & 0b100111) == 0b000000) {
                 if (op2 == 0b0) {
                     if ((op3 & 0b100) == 0b000) {
-                        return decodeSmeMovaInsert(machInst);
+                        return Aarch64::decodeSmeMovaInsert(machInst);
                     }
                 }
 
                 if (op2 ==0b1) {
-                    return decodeSmeMovaExtract(machInst);
+                    return Aarch64::decodeSmeMovaExtract(machInst);
                 }
             }
 
             if ((op1 & 0b100111) == 0b000001) {
-                return decodeSmeMisc(machInst);
+                return Aarch64::decodeSmeMisc(machInst);
             }
 
             if ((op1 & 0b100111) == 0b000010) {
                 if ((op3 & 0b010) == 0b000) {
-                    return decodeSmeAddArray(machInst);
+                    return Aarch64::decodeSmeAddArray(machInst);
                 }
             }
         }
 
         if (op0 == 0b11) {
-            return decodeSmeMemory(machInst);
+            return Aarch64::decodeSmeMemory(machInst);
         }
 
         // We should not get here
@@ -262,10 +267,8 @@ namespace Aarch64
 
 
         constexpr uint32_t ftmopa_h_base_encoding = 0x81A12018u;
-
         constexpr uint32_t ftmopa_h_opcode_key =
             ftmopa_h_base_encoding & ~ftmopa_h_operand_mask;
-
         // Match: mask out operand bits from 'insn' and compare only the
         // fixed opcode pattern against the key.
         return (insn & ~ftmopa_h_operand_mask) == ftmopa_h_opcode_key;
@@ -277,18 +280,16 @@ namespace Aarch64
     {
         // Operand fields as per FTMOPA .S encoding in the ARM ARM.
         constexpr uint32_t ftmopa_s_operand_mask =
-            (0x1Fu << 16)   // Zm
-        | (0x7u  << 10)   // Zk/K
-        | (0xFu  <<  6)   // Zn group
-        | (0x3u  <<  4)   // index (i2)
-        | (0x3u  <<  0);  // ZAda (.S uses bits [1:0])
+              (0x1Fu << 16)   // Zm
+            | (0x7u  << 10)   // Zk/K
+            | (0xFu  <<  6)   // Zn group
+            | (0x3u  <<  4)   // index (i2)
+            | (0x3u  <<  0);  // ZAda (.S uses bits [1:0])
 
         constexpr uint32_t ftmopa_s_base_encoding = 0x80A02008u;
-        // ^ This is 0x80A12018 with all operand bits zeroed; 
-
+        // ^ This is 0x80A12018 with all operand bits zeroed;
         constexpr uint32_t ftmopa_s_opcode_key =
             ftmopa_s_base_encoding & ~ftmopa_s_operand_mask;
-
         // Compare only the fixed opcode bits
         return (insn & ~ftmopa_s_operand_mask) == ftmopa_s_opcode_key;
     }
@@ -317,10 +318,10 @@ namespace Aarch64
               (1u << 31)
             | (1u << 24)
             | (1u << 22)
-            | (1u << 21);     // 0x81600000
+            | (1u << 21);
+        // 0x81600000
 
         constexpr uint32_t opcode_key = base_encoding & ~operand_mask;
-
         // Match only on the fixed opcode bits.
         return (insn & ~operand_mask) == opcode_key;
     }
@@ -336,14 +337,15 @@ namespace Aarch64
         //   i2   : bits  5..4
         //   ZAda : bit   0      (ZA0..ZA1 for .H)
         constexpr uint32_t operand_mask =
-            (0x1Fu << 16)   // Zm
+              (0x1Fu << 16)   // Zm
             | (0x7u  << 10)   // K:Zk
             | (0xFu  <<  6)   // Zn group
             | (0x3u  <<  4)   // i2
             | (0x1u  <<  0);  // ZAda (.H: only bit 0)
 
         // TODO: set base_encoding to the FP8->FP16 FTMOPA opcode with all
-        // operand fields zeroed. You can get this by assembling e.g.:
+        // operand fields zeroed.
+        // You can get this by assembling e.g.:
         //
         //   ftmopa za0.h, {z0.b-z1.b}, z0.b, z20.b[0]
         //
@@ -374,8 +376,7 @@ namespace Aarch64
             | (0x3u  <<  4)   // i2
             | (0x3u  <<  0);  // ZAda
 
-        constexpr uint32_t base_encoding = 0x80600008u; 
-
+        constexpr uint32_t base_encoding = 0x80600008u;
         constexpr uint32_t opcode_key = base_encoding & ~operand_mask;
 
         return (insn & ~operand_mask) == opcode_key;
@@ -391,11 +392,11 @@ namespace Aarch64
         // Bit 15=0, 14-10=0, 4-2=0. 
         // Verify this hex mask against your specific SME2 opcode spec.
         constexpr uint32_t operand_mask = 
-            (0x1F << 16) | (0x1F << 5) | (0x3 << 0);
+            (0x1F << 16) |
+            (0x1F << 5) | (0x3 << 0);
             
         // Assuming base encoding is roughly 0xC0800000 
-        constexpr uint32_t base_encoding = 0xC0800000; 
-
+        constexpr uint32_t base_encoding = 0xC0800000;
         return (insn & ~operand_mask) == base_encoding;
     }
 
@@ -406,7 +407,8 @@ namespace Aarch64
         // Operands: Zm(20-16), Zn(9-5), ZAda(1-0) are masked out.
         // We also check bits [15:10] and [4] as our unique signature.
         constexpr uint32_t mask = 
-            (0x1F << 16) | (0x1F << 5) | (0x3 << 0);
+            (0x1F << 16) |
+            (0x1F << 5) | (0x3 << 0);
             
         // Opcode: 0xC000FC10
         // Top 11 bits (31-21): 0xC00 (Matches SmeControl/Zero range)
@@ -414,14 +416,28 @@ namespace Aarch64
         // Bit 4: 1
         return (insn & ~mask) == 0xC000FC10;
     }
+    
+    // FMOP4A (Widening, 2-way, FP16 to FP32)
+    static inline bool
+    isFmop4aWideningF16(uint32_t insn)
+    {
+        // 31-21: 1100 0000 100 (0xC08)
+        // 15-10: 0011 11 (0x0F)
+        // 4: 0
+        // 3-2: 10
+        // Mask excludes Zm(20-16), Zn(9-5), ZAda(1-0)
+        constexpr uint32_t mask = 0xFFE0FC1C;
+        constexpr uint32_t base = 0xC0803C08;
+        return (insn & mask) == base;
+    }
 
     static inline bool
     isMova2B(uint32_t insn)
     {
         // operands: V(15), Rs(14-13), Zn(9-6), off3(2-0)
         constexpr uint32_t operand_mask =
-            (1u << 15) | (0x3u << 13) | (0xFu << 6) | (0x7u << 0);
-
+            (1u << 15) |
+            (0x3u << 13) | (0xFu << 6) | (0x7u << 0);
         // From objdump: mov za0h.b[w12,0:1],{z0,z1} == 0xC0040000
         constexpr uint32_t base = 0xC0040000u;
         constexpr uint32_t key  = base & ~operand_mask;
@@ -434,8 +450,8 @@ namespace Aarch64
     {
         // operands: V(15), Rs(14-13), Zn(9-6), ZAd(2), off2(1-0)
         constexpr uint32_t operand_mask =
-            (1u << 15) | (0x3u << 13) | (0xFu << 6) | (1u << 2) | (0x3u << 0);
-
+            (1u << 15) |
+            (0x3u << 13) | (0xFu << 6) | (1u << 2) | (0x3u << 0);
         // From objdump: mov za0h.h[w12,0:1],{z2,z3} == 0xC0440040
         constexpr uint32_t base = 0xC0440040u;
         constexpr uint32_t key  = base & ~operand_mask;
@@ -448,8 +464,8 @@ namespace Aarch64
     {
         // operands: V(15), Rs(14-13), Zn(9-6), ZAd(2-1), o1(0)
         constexpr uint32_t operand_mask =
-            (1u << 15) | (0x3u << 13) | (0xFu << 6) | (0x3u << 1) | (1u << 0);
-
+            (1u << 15) |
+            (0x3u << 13) | (0xFu << 6) | (0x3u << 1) | (1u << 0);
         // From objdump: mov za0h.s[w12,0:1],{z4,z5} == 0xC0840080
         constexpr uint32_t base = 0xC0840080u;
         constexpr uint32_t key  = base & ~operand_mask;
@@ -462,8 +478,8 @@ namespace Aarch64
     {
         // operands: V(15), Rs(14-13), Zn(9-6), ZAd(2-0) ; offset is implicit
         constexpr uint32_t operand_mask =
-            (1u << 15) | (0x3u << 13) | (0xFu << 6) | (0x7u << 0);
-
+            (1u << 15) |
+            (0x3u << 13) | (0xFu << 6) | (0x7u << 0);
         // From objdump: mov za0h.d[w12,0:1],{z6,z7} == 0xC0C400C0
         constexpr uint32_t base = 0xC0C400C0u;
         constexpr uint32_t key  = base & ~operand_mask;
@@ -507,37 +523,35 @@ namespace Aarch64
         const uint8_t op1 = (uint8_t)bits(machInst, 24);
         const uint8_t op2 = (uint8_t)bits(machInst, 21);
         const uint8_t op3 = (uint8_t)bits(machInst, 3);
-
         // ---- TEMP DEBUG fast-path: fmopa za0.h, p0/m, p1/m, z0.b, z1.b ----
         // encoding bytes: [0x08, 0x20, 0xA1, 0x80] => 0x80A12008
         const uint32_t insn = (uint32_t)machInst;
-
-        if (isSme2Scvtf2(insn) || isSme2Scvtf4(insn) ||
-            isSme2Ucvtf2(insn) || isSme2Ucvtf4(insn)) {
-            return decodeSmeCvt(machInst);
+        if (Aarch64::isSme2Scvtf2(insn) || Aarch64::isSme2Scvtf4(insn) ||
+            Aarch64::isSme2Ucvtf2(insn) || Aarch64::isSme2Ucvtf4(insn)) {
+            return Aarch64::decodeSmeCvt(machInst);
         }
 
         if (insn == 0x80A12008) {
             DPRINTF(Decode, "SME.F8 fastpath hit: insn=%#010x\n", insn);
-            return decodeSmeOpF8(machInst);
+            return Aarch64::decodeSmeOpF8(machInst);
         }
         
-        if (isFtmopaNonWideningF16(insn) || isFtmopaNonWideningF32(insn)) {
-            return decodeSmeTmop(machInst);
+        if (Aarch64::isFtmopaNonWideningF16(insn) || Aarch64::isFtmopaNonWideningF32(insn)) {
+            return Aarch64::decodeSmeTmop(machInst);
         }   
 
         if (op0 == 0) {
             if (op1 == 0) {
                 if (op2 == 0) {
                     if (op3 == 0) {
-                        return decodeSmeOpFp32(machInst);
+                        return Aarch64::decodeSmeOpFp32(machInst);
                     }
                 }
 
                 // FP8 family (both 2-way (op3==1) and 4-way (op3==0) variants)
                 if (op2 == 1) {
                     if (op3 == 1 || op3 == 0) {
-                        return decodeSmeOpF8(machInst);
+                        return Aarch64::decodeSmeOpF8(machInst);
                     }
                 }
             }
@@ -545,13 +559,13 @@ namespace Aarch64
             if (op1 == 1) {
                 if (op2 == 0) {
                     if (op3 == 0) {
-                        return decodeSmeOpBf16(machInst);
+                        return Aarch64::decodeSmeOpBf16(machInst);
                     }
                 }
 
                 if (op2 == 1) {
                     if (op3 == 0) {
-                        return decodeSmeOpFp16(machInst);
+                        return Aarch64::decodeSmeOpFp16(machInst);
                     }
                 }
             }
@@ -559,7 +573,7 @@ namespace Aarch64
 
         if (op0 == 1) {
             if (op3 == 0) {
-                return decodeSmeOpInt8(machInst);
+                return Aarch64::decodeSmeOpInt8(machInst);
             }
         }
 
@@ -572,7 +586,6 @@ namespace Aarch64
     decodeSmeOpFp32(ExtMachInst machInst)
     {
         const uint32_t S = (uint32_t)bits(machInst, 4, 4);
-
         const RegIndex Zm = (RegIndex)(uint32_t)(bits(machInst, 20, 16));
         const RegIndex Zn = (RegIndex)(uint32_t)(bits(machInst, 9, 5));
         const RegIndex Pn = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
@@ -595,10 +608,10 @@ namespace Aarch64
         // The following code is functionally correct for decode, but
         // remains commented out as the current gem5 fplib implementation
         // doesn't support BF16, and hence the instructions themselves
-        // remain unimplemented. Once these have been implemented, this code
+        // remain unimplemented.
+        // Once these have been implemented, this code
         // can be safely uncommented to enable decode for the two BF16 Outer
         // Product instructions added by FEAT_SME.
-
         // const uint32_t S = (uint32_t)bits(machInst, 4, 4);
 
         // const RegIndex Zm = (RegIndex)(uint32_t)(
@@ -611,7 +624,6 @@ namespace Aarch64
         //     bits(machInst, 15, 13));
         // const RegIndex ZAda = (RegIndex)(uint32_t)(
         //     bits(machInst, 1, 0));
-
         // if (S == 0) {
         //     return new SmeBmopa(machInst);
         // } else {
@@ -648,7 +660,6 @@ namespace Aarch64
     decodeSmeOpFp16(ExtMachInst machInst)
     {
         const uint32_t S = (uint32_t)bits(machInst, 4, 4);
-
         const RegIndex Zm = (RegIndex)(uint32_t)(bits(machInst, 20, 16));
         const RegIndex Zn = (RegIndex)(uint32_t)(bits(machInst, 9, 5));
         const RegIndex Pn = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
@@ -671,10 +682,9 @@ namespace Aarch64
         const uint32_t insn = (uint32_t)machInst;
         DPRINTF(Decode, "decodeSmeTmop: insn=%#010x\n", insn);
 
-        if (isFtmopaWideningF16ToF32(insn)) {
+        if (Aarch64::isFtmopaWideningF16ToF32(insn)) {
             // Zm: bits 20-16
             const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
-
             // Zn group: Inst{9-6} -> pair {Zn1, Zn1+1}
             const uint32_t zn_group = (uint32_t)bits(machInst, 9, 6);
             const RegIndex Zn1 = (RegIndex)(zn_group << 1);
@@ -685,15 +695,14 @@ namespace Aarch64
             if (zk_field < 4) {
                 Zk = (RegIndex)(20 + zk_field);
             } else {
-                Zk = (RegIndex)(24 + zk_field); // 4..7 -> 28..31
+                Zk = (RegIndex)(24 + zk_field);
+                // 4..7 -> 28..31
             }
 
             // Control segment index from Inst{5-4}
             const uint32_t index = (uint32_t)bits(machInst, 5, 4);
-
             // Widening FTMOPA writes ZA.s (FP32), so we use bits [1:0] for ZAda.
             const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0);
-
             // Build imm exactly like non-widening FTMOPA
             //
             // imm layout:
@@ -713,13 +722,11 @@ namespace Aarch64
             // FTMOPA widening: TPSElem = uint16_t (FP16), TPDElem = uint32_t (FP32)
             return new SmeFtmopaWidening<uint16_t, uint32_t>(
                 machInst, imm, Zn1, Zk, Zm, index);
-        
-        } else if (isFtmopaWidening4WayF8ToF32(insn)) {
+        } else if (Aarch64::isFtmopaWidening4WayF8ToF32(insn)) {
             // --- FTMOPA widening FP8->FP32 (4-way) decode ---
 
             // Zm: bits 20-16
             const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
-
             // Zn group: Inst{9-6} -> pair {Zn1, Zn1+1}
             const uint32_t zn_group = (uint32_t)bits(machInst, 9, 6);
             const RegIndex Zn1 = (RegIndex)(zn_group << 1);
@@ -730,39 +737,37 @@ namespace Aarch64
             if (zk_field < 4) {
                 Zk = (RegIndex)(20 + zk_field);
             } else {
-                Zk = (RegIndex)(24 + zk_field); // 4..7 -> 28..31
+                Zk = (RegIndex)(24 + zk_field);
+                // 4..7 -> 28..31
             }
 
             // Control segment index from Inst{5-4}
             const uint32_t index = (uint32_t)bits(machInst, 5, 4);
-
             // ZA.s destination tile, bits [1:0]
             const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0);
-
             // imm layout shared with other FTMOPA forms:
             //   [ 2:0]  ZAda
             //   [ 4:3]  index
             //   [ 9:5]  Zn group (base)
             //   [14:10] Zm
             //   [19:15] Zk
+            
             uint64_t imm = 0;
-            imm |= (uint64_t)(ZAda & 0x7);              // 2:0
-            imm |= (uint64_t)((index    & 0x3)  << 3);  // 4:3
-            imm |= (uint64_t)((zn_group & 0x1F) << 5);  // 9:5
-            imm |= (uint64_t)((Zm       & 0x1F) << 10); // 14:10
-            imm |= (uint64_t)((Zk       & 0x1F) << 15); // 19:15
+            imm |= (uint64_t)(ZAda & 0x7);                 // 2:0
+            imm |= (uint64_t)((index    & 0x3)  << 3);     // 4:3
+            imm |= (uint64_t)((zn_group & 0x1F) << 5);     // 9:5
+            imm |= (uint64_t)((Zm       & 0x1F) << 10);    // 14:10
+            imm |= (uint64_t)((Zk       & 0x1F) << 15);    // 19:15
 
             // FTMOPA widening FP8->FP32 (4-way):
             //   TPSElem = uint8_t (FP8), TPDElem = uint32_t (FP32)
             return new SmeFtmopaWidening4WayF8F32<uint8_t, uint32_t>(
                 machInst, imm, Zn1, Zk, Zm, index);
-
-        } else if (isFtmopaWideningF8ToF16(insn)) {
+        } else if (Aarch64::isFtmopaWideningF8ToF16(insn)) {
             // --- FTMOPA widening FP8->FP16 decodes ---
 
             // Zm: bits 20-16
             const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
-
             // Zn group: Inst{9-6} -> pair {Zn1, Zn1+1}
             const uint32_t zn_group = (uint32_t)bits(machInst, 9, 6);
             const RegIndex Zn1 = (RegIndex)(zn_group << 1);
@@ -773,27 +778,27 @@ namespace Aarch64
             if (zk_field < 4) {
                 Zk = (RegIndex)(20 + zk_field);
             } else {
-                Zk = (RegIndex)(24 + zk_field); // 4..7 -> 28..31
+                Zk = (RegIndex)(24 + zk_field);
+                // 4..7 -> 28..31
             }
 
             // Control segment index from Inst{5-4}
             const uint32_t index = (uint32_t)bits(machInst, 5, 4);
-
             // FTMOPA FP8->FP16 writes ZA.h, so ZAda uses bit 0 (ZA0..ZA1)
             const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 0, 0);
-
             // imm layout:
             //   [ 2:0]  ZAda
             //   [ 4:3]  index
             //   [ 9:5]  Zn group (base)
             //   [14:10] Zm
             //   [19:15] Zk
+            
             uint64_t imm = 0;
-            imm |= (uint64_t)(ZAda & 0x7);              // 2:0
-            imm |= (uint64_t)((index    & 0x3)  << 3);  // 4:3
-            imm |= (uint64_t)((zn_group & 0x1F) << 5);  // 9:5
-            imm |= (uint64_t)((Zm       & 0x1F) << 10); // 14:10
-            imm |= (uint64_t)((Zk       & 0x1F) << 15); // 19:15
+            imm |= (uint64_t)(ZAda & 0x7);                 // 2:0
+            imm |= (uint64_t)((index    & 0x3)  << 3);     // 4:3
+            imm |= (uint64_t)((zn_group & 0x1F) << 5);     // 9:5
+            imm |= (uint64_t)((Zm       & 0x1F) << 10);    // 14:10
+            imm |= (uint64_t)((Zk       & 0x1F) << 15);    // 19:15
 
             // FTMOPA widening FP8->FP16:
             //   TPSElem = uint8_t (FP8), TPDElem = uint16_t (FP16)
@@ -803,8 +808,8 @@ namespace Aarch64
 
 
         // Decide element size from encoding
-        const bool isF16 = isFtmopaNonWideningF16(insn);
-        const bool isF32 = isFtmopaNonWideningF32(insn);
+        const bool isF16 = Aarch64::isFtmopaNonWideningF16(insn);
+        const bool isF32 = Aarch64::isFtmopaNonWideningF32(insn);
 
         if (!isF16 && !isF32) {
             DPRINTF(Decode, "decodeSmeTmop: predicate miss (insn=%#010x)\n", insn);
@@ -813,7 +818,6 @@ namespace Aarch64
 
         // Zm: bits 20-16
         const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
-
         // Zn group: Inst{9-6} -> pair {Zn1, Zn1+1}
         const uint32_t zn_group = (uint32_t)bits(machInst, 9, 6);
         const RegIndex Zn1 = (RegIndex)(zn_group << 1);
@@ -824,12 +828,12 @@ namespace Aarch64
         if (zk_field < 4) {
             Zk = (RegIndex)(20 + zk_field);
         } else {
-            Zk = (RegIndex)(24 + zk_field); // 4..7 -> 28..31
+            Zk = (RegIndex)(24 + zk_field);
+            // 4..7 -> 28..31
         }
 
         // Control segment index from Inst{5-4}
         const uint32_t index = (uint32_t)bits(machInst, 5, 4);
-
         // ZA tile index:
         //   - half-precision:  bit 0 (ZA0–ZA1)
         //   - single-precision: bits 1–0 (ZA0–ZA3)
@@ -883,7 +887,6 @@ namespace Aarch64
         const RegIndex Pn = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
         const RegIndex Pm = (RegIndex)(uint32_t)(bits(machInst, 15, 13));
         const RegIndex ZAda = (RegIndex)(uint32_t)(bits(machInst, 1, 0));
-
         if (u0 == 0) {
             if (u1 == 0) {
                 if (S == 0) {
@@ -931,17 +934,16 @@ namespace Aarch64
         const uint8_t op0 = (uint8_t)bits(machInst, 29);
         const uint8_t op1 = (uint8_t)bits(machInst, 24);
         const uint8_t op2 = (uint8_t)bits(machInst, 21);
-
         if (op0 == 0) {
             if (op1 == 0) {
                 if (op2 == 0) {
-                    return decodeSmeOpFp64(machInst);
+                    return Aarch64::decodeSmeOpFp64(machInst);
                 }
             }
         }
 
         if (op0 == 1) {
-            return decodeSmeOpInt16(machInst);
+            return Aarch64::decodeSmeOpInt16(machInst);
         }
 
         return new Unknown64(machInst);
@@ -951,7 +953,6 @@ namespace Aarch64
     decodeSmeOpFp64(ExtMachInst machInst)
     {
         const uint32_t S = (uint32_t)bits(machInst, 4, 4);
-
         const RegIndex Zm = (RegIndex)(uint32_t)(bits(machInst, 20, 16));
         const RegIndex Zn = (RegIndex)(uint32_t)(bits(machInst, 9, 5));
         const RegIndex Pn = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
@@ -981,7 +982,6 @@ namespace Aarch64
         const RegIndex Pn = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
         const RegIndex Pm = (RegIndex)(uint32_t)(bits(machInst, 15, 13));
         const RegIndex ZAda = (RegIndex)(uint32_t)(bits(machInst, 2, 0));
-
         if (u0 == 0) {
             if (u1 == 0) {
                 if (S == 0) {
@@ -1026,7 +1026,6 @@ namespace Aarch64
     decodeSmeMovaInsert(ExtMachInst machInst)
     {
         const uint8_t op0 = (uint8_t)bits(machInst, 18);
-
         if (op0 == 1) {
             return new Unknown64(machInst);
         }
@@ -1121,13 +1120,10 @@ namespace Aarch64
     decodeSmeMovaVecToTile2Regs(ExtMachInst machInst)
     {
         const uint32_t insn = (uint32_t)machInst;
-
         const bool V = (bool)bits(machInst, 15);
         const RegIndex Ws = (RegIndex)(uint32_t)(bits(machInst, 14, 13) + 12);
-
         // Zn group in encoding is bits[9:6]
         const uint32_t zn_group = (uint32_t)bits(machInst, 9, 6);
-
         // Pack imm for execute side (as your smeMovaVecToTile2RegsInst expects):
         //   [ 2:0]  ZAd_raw
         //   [ 7:3]  zn_group
@@ -1137,22 +1133,22 @@ namespace Aarch64
         uint32_t off_raw  = 0;
         uint32_t esz_code = 0;
 
-        if (isMova2B(insn)) {
+        if (Aarch64::isMova2B(insn)) {
             // B: ZAd is implicitly 0, off3 is bits[2:0]
             ZAd_raw  = 0;
             off_raw  = (uint32_t)bits(machInst, 2, 0); // raw off_field
             esz_code = 0; // B
-        } else if (isMova2H(insn)) {
+        } else if (Aarch64::isMova2H(insn)) {
             // H: ZAd is bit[2], off2 is bits[1:0]
             ZAd_raw  = (uint32_t)bits(machInst, 2, 2);
             off_raw  = (uint32_t)bits(machInst, 1, 0);
             esz_code = 1; // H
-        } else if (isMova2S(insn)) {
+        } else if (Aarch64::isMova2S(insn)) {
             // S: ZAd is bits[2:1], off1 is bit[0]
             ZAd_raw  = (uint32_t)bits(machInst, 2, 1);
             off_raw  = (uint32_t)bits(machInst, 0, 0);
             esz_code = 2; // S
-        } else if (isMova2D(insn)) {
+        } else if (Aarch64::isMova2D(insn)) {
             // D: ZAd is bits[2:0], no offset field in encoding
             ZAd_raw  = (uint32_t)bits(machInst, 2, 0);
             off_raw  = 0;
@@ -1175,16 +1171,12 @@ namespace Aarch64
     decodeSmeCvt(ExtMachInst machInst)
     {
         const uint32_t insn = (uint32_t)machInst;
-        
         // Detect 4-register variant
-        const bool is4 = isSme2Scvtf4(insn) || isSme2Ucvtf4(insn); // (Assuming you might add specific matchers, or just use the existing logic)
-        // A safer check using the existing matchers which cover both:
         const bool isScvtf4_mask = (insn & 0xfffffc00u) == 0xC132E000u;
         const bool is4_reg = isScvtf4_mask;
 
         // Check Bit 5 for Unsigned (UCVTF) vs Signed (SCVTF)
         const bool isUnsigned = (bool)bits(machInst, 5);
-
         // Zn is bits 9-6 (4 bits), Zd is bits 4-0 (5 bits)
         const uint32_t n_base = (uint32_t)bits(machInst, 9, 6);
         const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
@@ -1210,7 +1202,7 @@ namespace Aarch64
 
         if (op0 == 0b00) {
             if (op1 == 0b00000000000) {
-                return decodeSmeZero(machInst);
+                return Aarch64::decodeSmeZero(machInst);
             }
         }
 
@@ -1221,7 +1213,6 @@ namespace Aarch64
     decodeSmeZero(ExtMachInst machInst)
     {
         const uint8_t imm8 = (uint8_t)bits(machInst, 7, 0);
-
         return new SmeZero<uint64_t>(machInst, imm8);
     }
 
@@ -1231,11 +1222,10 @@ namespace Aarch64
         const uint32_t op0 = (uint32_t)bits(machInst, 23);
         const uint32_t op1 = (uint32_t)bits(machInst, 18, 17);
         const uint32_t op2 = (uint32_t)bits(machInst, 4);
-
         if (op0 == 1) {
             if (op1 == 0b00) {
                 if (op2 == 0) {
-                    return decodeSmeAddhv(machInst);
+                    return Aarch64::decodeSmeAddhv(machInst);
                 }
             }
         }
@@ -1249,12 +1239,10 @@ namespace Aarch64
         const uint32_t V = (uint32_t)bits(machInst, 16, 16);
         const uint32_t op = (uint32_t)bits(machInst, 22, 22);
         const uint32_t op2 = (uint32_t)bits(machInst, 2, 0);
-
         const RegIndex Zn = (RegIndex)(uint32_t)(bits(machInst, 9, 5));
         const RegIndex Pn = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
         const RegIndex Pm = (RegIndex)(uint32_t)(bits(machInst, 15, 13));
         const RegIndex ZAda = (RegIndex)(uint32_t)(bits(machInst, 2, 0));
-
         if (op == 0) { // 32-bit
             if (V == 0) {
                 if ((op2 & 0b100) == 0b000) {
@@ -1283,16 +1271,15 @@ namespace Aarch64
         const uint8_t op1 = (uint8_t)bits(machInst, 20, 15);
         const uint8_t op2 = (uint8_t)bits(machInst, 12, 10);
         const uint8_t op3 = (uint8_t)bits(machInst, 4);
-
         if ((op0 & 0b1001) == 0b0000) {
             if (op3 == 0b0) {
-                return decodeSmeLoad(machInst);
+                return Aarch64::decodeSmeLoad(machInst);
             }
         }
 
         if ((op0 & 0b1001) == 0b0001) {
             if (op3 == 0b0) {
-                return decodeSmeStore(machInst);
+                return Aarch64::decodeSmeStore(machInst);
             }
         }
 
@@ -1300,7 +1287,7 @@ namespace Aarch64
             if (op1 == 0b000000) {
                 if (op2 == 0b000) {
                     if (op3 == 0b0) {
-                        return decodeSmeLoadStoreArray(machInst);
+                        return Aarch64::decodeSmeLoadStoreArray(machInst);
                     }
                 }
             }
@@ -1308,13 +1295,13 @@ namespace Aarch64
 
         if (op0 == 0b1110) {
             if (op3 == 0b0) {
-                return decodeSmeLoadQuadWord(machInst);
+                return Aarch64::decodeSmeLoadQuadWord(machInst);
             }
         }
 
         if (op0 == 0b1111) {
             if (op3 == 0b0) {
-                return decodeSmeStoreQuadWord(machInst);
+                return Aarch64::decodeSmeStoreQuadWord(machInst);
             }
         }
 
@@ -1334,7 +1321,6 @@ namespace Aarch64
             bits(machInst, 14, 13) + 12);
         const uint32_t ZAt_imm = (uint32_t)bits(machInst, 3, 0);
         const RegIndex Pg = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
-
         switch(msz)
         {
           case 0b00:
@@ -1365,7 +1351,6 @@ namespace Aarch64
             bits(machInst, 14, 13) + 12);
         const uint32_t ZAt_imm = (uint32_t)bits(machInst, 3, 0);
         const RegIndex Pg = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
-
         switch(msz)
         {
           case 0b00:
@@ -1387,7 +1372,6 @@ namespace Aarch64
     decodeSmeLoadStoreArray(ExtMachInst machInst)
     {
         const uint8_t op = (uint8_t)bits(machInst, 21);
-
         const RegIndex Rn = makeSP(
                                 (RegIndex)(uint32_t)bits(machInst, 9, 5));
         const RegIndex Rv = (RegIndex)(uint32_t)(
@@ -1407,7 +1391,6 @@ namespace Aarch64
     decodeSmeLoadQuadWord(ExtMachInst machInst)
     {
         const bool V = (bool)bits(machInst, 15);
-
         const RegIndex Rn = makeSP(
                                 (RegIndex)(uint32_t)bits(machInst, 9, 5));
         const RegIndex Rm = (RegIndex)(uint32_t)(bits(machInst, 20, 16));
@@ -1415,7 +1398,6 @@ namespace Aarch64
             bits(machInst, 14, 13) + 12);
         const uint32_t ZAt = (uint32_t)bits(machInst, 3, 0);
         const RegIndex Pg = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
-
         return new SmeLd1q<__uint128_t>(machInst, ZAt, Rn, Pg, Rs, Rm, V);
     }
 
@@ -1423,7 +1405,6 @@ namespace Aarch64
     decodeSmeStoreQuadWord(ExtMachInst machInst)
     {
         const bool V = (bool)bits(machInst, 15);
-
         const RegIndex Rn = makeSP(
                                 (RegIndex)(uint32_t)bits(machInst, 9, 5));
         const RegIndex Rm = (RegIndex)(uint32_t)(bits(machInst, 20, 16));
@@ -1431,7 +1412,6 @@ namespace Aarch64
             bits(machInst, 14, 13) + 12);
         const uint32_t ZAt = (uint32_t)bits(machInst, 3, 0);
         const RegIndex Pg = (RegIndex)(uint32_t)(bits(machInst, 12, 10));
-
         return new SmeSt1q<__uint128_t>(machInst, ZAt, Rn, Pg, Rs, Rm, V);
     }
 }
