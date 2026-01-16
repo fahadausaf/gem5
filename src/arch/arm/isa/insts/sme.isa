@@ -1687,6 +1687,83 @@ let {{
     smeFmop4aInst('fmop4a_widening_f16', 'Fmop4aWideningF16', 'MatrixOPOp', ['uint16_t, uint32_t'], fmop4aWideningF16Code)
 
 
+    # FMOP4A (widening, 2-way, FP8 -> FP16) Implementation
+    # FMOP4A <ZAda>.H, <Zn>.B, <Zm>.B
+    fmop4aWideningF8ToF16Code = r'''
+        auto tile = getTile<TPDElem>(ZA, imm);
+        FPSCR fpscr = (FPSCR) Fpscr;
+        
+        // Debug Trace
+        DPRINTF(Arm, "SmeFmop4aWideningF8ToF16: Executing over SVL/2 elements (eCount=%d)\n", eCount);
+
+        // FP8 (byte) -> FP16 bits conversion stub (Reuse of existing logic)
+        // sign = 0, exponent = 15 (bias), mantissa from 8-bit code.
+        auto fp8_to_fp16_bits = [](uint8_t b) -> uint16_t {
+            if (b == 0) return 0; // preserve zero
+            uint16_t mant = static_cast<uint16_t>(b & 0xFF) << 2; // 10-bit mantissa
+            uint16_t exp  = 15; // normal exponent (not subnormal)
+            return static_cast<uint16_t>((exp << 10) | mant);
+        };
+
+        auto widen = [&](uint8_t b) -> TPDElem {
+            return static_cast<TPDElem>(fp8_to_fp16_bits(b));
+        };
+
+        // Access Source Registers (Zn, Zm) as FP8 (uint8_t)
+        ArmISA::VecRegContainer zn, zm;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op1], &zn);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op2], &zm);
+        const uint8_t *zn_ptr = zn.as<uint8_t>();
+        const uint8_t *zm_ptr = zm.as<uint8_t>();
+
+        // eCount is the number of 16-bit (TPDElem) elements in the vector (SVL / 2).
+        // The loop iterates over the destination tile dimensions (FP16).
+        for (int j = 0; j < eCount; ++j) {
+            // For 2-way widening, we consume 2 FP8 elements for every 1 FP16 row.
+            // Row j corresponds to Zn indices [2*j] and [2*j + 1].
+            uint8_t n0 = zn_ptr[2 * j];
+            uint8_t n1 = zn_ptr[2 * j + 1];
+
+            // Convert inputs to FP16
+            TPDElem val_n0 = widen(n0);
+            TPDElem val_n1 = widen(n1);
+
+            for (int i = 0; i < eCount; ++i) {
+                // Column i corresponds to Zm indices [2*i] and [2*i + 1].
+                uint8_t m0 = zm_ptr[2 * i];
+                uint8_t m1 = zm_ptr[2 * i + 1];
+
+                // Convert inputs to FP16
+                TPDElem val_m0 = widen(m0);
+                TPDElem val_m1 = widen(m1);
+
+                TPDElem acc = tile[j][i];
+
+                // Accumulate first product (n0 * m0)
+                TPDElem prod0 = fplibMul(val_n0, val_m0, fpscr);
+                acc = fplibAdd(acc, prod0, fpscr);
+
+                // Accumulate second product (n1 * m1)
+                TPDElem prod1 = fplibMul(val_n1, val_m1, fpscr);
+                acc = fplibAdd(acc, prod1, fpscr);
+
+                // Write back
+                tile[j][i] = acc;
+
+                // Optional Debug Trace for top-left element
+                if (j == 0 && i == 0) {
+                     DPRINTF(Arm, "SmeFmop4aWideningF8ToF16[0][0]: Zn={0x%x, 0x%x}, Zm={0x%x, 0x%x}, NewZA=0x%x\n", 
+                             n0, n1, m0, m1, acc);
+                }
+            }
+        }
+    '''
+
+    # Instantiate FMOP4A Widening: FP8 (uint8_t) -> FP16 (uint16_t)
+    smeFmop4aInst('fmop4a_widening_f8_f16', 'Fmop4aWideningF8ToF16', 'MatrixOPOp', 
+                  ['uint8_t, uint16_t'], fmop4aWideningF8ToF16Code)
+
+
     # LD1B
     smeLd1xInst('ld1b', 'Ld1b', 'MemReadOp', ['uint8_t'])
 

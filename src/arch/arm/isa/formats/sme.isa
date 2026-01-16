@@ -90,6 +90,7 @@ namespace Aarch64
     static inline bool isFtmopaWidening4WayF8ToF32(uint32_t insn);
     static inline bool isFmop4aWidening(uint32_t insn);
     static inline bool isFmop4aWideningF16(uint32_t insn);
+    static inline bool isFmop4aWideningF8ToF16(uint32_t insn);
 
     static inline bool isMova2B(uint32_t insn);
     static inline bool isMova2H(uint32_t insn);
@@ -163,6 +164,17 @@ namespace Aarch64
              const RegIndex Zn = (RegIndex)(uint32_t)bits(machInst, 9, 5);
              const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 1, 0); // 2 bits for .S tile
              return new SmeFmop4aWideningF16<uint16_t, uint32_t>(machInst, ZAda, Zn, Zm);
+        }
+
+        // Check for FMOP4A (Widening, 2-way, FP8 -> FP16)
+        if (Aarch64::isFmop4aWideningF8ToF16(insn)) {
+             const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+             const RegIndex Zn = (RegIndex)(uint32_t)bits(machInst, 9, 5);
+             // For FP16 (.H) destination, ZAda is usually bit [0] (ZA0-ZA1)
+             const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 0, 0);
+
+             // Instantiate Widening version: Input uint8_t, Output uint16_t
+             return new SmeFmop4aWideningF8ToF16<uint8_t, uint16_t>(machInst, ZAda, Zn, Zm);
         }
 
         // ------------------------------------------------------------
@@ -428,6 +440,24 @@ namespace Aarch64
         // Mask excludes Zm(20-16), Zn(9-5), ZAda(1-0)
         constexpr uint32_t mask = 0xFFE0FC1C;
         constexpr uint32_t base = 0xC0803C08;
+        return (insn & mask) == base;
+    }
+
+    // FMOP4A (Widening, 2-way, FP8 to FP16)
+    static inline bool
+    isFmop4aWideningF8ToF16(uint32_t insn)
+    {
+        // Encoding Pattern
+        // 31-21: 1100 0000 100 (0xC08)
+        // 15-10: 0011 11 (0x0F)
+        // 4: 0
+        // 3-2: 01 (Distinct from FP16->FP32 which is 10)
+        
+        // Mask excludes Zm(20-16), Zn(9-5), ZAda(0)
+        constexpr uint32_t mask = 0xFFE0FC1C; 
+        // Base encoding to match (Example: 0xC0803C04)
+        constexpr uint32_t base = 0xC0803C04; 
+        
         return (insn & mask) == base;
     }
 
