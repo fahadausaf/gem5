@@ -1764,6 +1764,73 @@ let {{
                   ['uint8_t, uint16_t'], fmop4aWideningF8ToF16Code)
 
 
+    # BFMOP4A (Non-widening / BFloat16) Implementation
+    # BFMOP4A <ZAda>.S, <Zn>.H, <Zm>.H
+    # Zm: 3 bits, Zn: 3 bits, ZAda: 1 bit
+    bfmop4aCode = r'''
+        auto tile = getTile<TPDElem>(ZA, imm);
+        FPSCR fpscr = (FPSCR) Fpscr;
+
+        DPRINTF(Arm, "SmeBfmop4a: Executing over SVL elements (eCount=%d)\n", eCount);
+
+        // Helper: Convert BFloat16 (uint16_t) to FP32 (uint32_t)
+        // BF16 is top 16 bits of FP32.
+        auto bf16_to_fp32 = [](uint16_t b) -> uint32_t {
+            return static_cast<uint32_t>(b) << 16;
+        };
+
+        // Access Source Registers (Zn, Zm) as uint16_t (BF16)
+        ArmISA::VecRegContainer zn, zm;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op1], &zn);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op2], &zm);
+        const uint16_t *zn_ptr = zn.as<uint16_t>();
+        const uint16_t *zm_ptr = zm.as<uint16_t>();
+
+        // eCount is the dimension of the FP32 tile (SVL / 4).
+        // Since input is BF16 (16-bit) and output is FP32 (32-bit),
+        // we perform a 2-way dot product.
+        // One FP32 row 'j' consumes two BF16 rows: [2*j] and [2*j+1]
+
+        for (int j = 0; j < eCount; ++j) {
+            // Get inputs for Row j from Zn (2 elements)
+            uint32_t n0 = bf16_to_fp32(zn_ptr[2 * j]);
+            uint32_t n1 = bf16_to_fp32(zn_ptr[2 * j + 1]);
+
+            for (int i = 0; i < eCount; ++i) {
+                // Get inputs for Column i from Zm (2 elements)
+                uint32_t m0 = bf16_to_fp32(zm_ptr[2 * i]);
+                uint32_t m1 = bf16_to_fp32(zm_ptr[2 * i + 1]);
+
+                TPDElem acc = tile[j][i];
+
+                // 2-way Dot Product Accumulation
+                // acc += n0 * m0
+                TPDElem prod0 = fplibMul(n0, m0, fpscr);
+                acc = fplibAdd(acc, prod0, fpscr);
+
+                // acc += n1 * m1
+                TPDElem prod1 = fplibMul(n1, m1, fpscr);
+                acc = fplibAdd(acc, prod1, fpscr);
+
+                // Write back
+                tile[j][i] = acc;
+
+                // Optional Debug Trace
+                if (j == 0 && i == 0) {
+                     DPRINTF(Arm, "SmeBfmop4a[0][0]: Zn_bf16={0x%x, 0x%x}, Zm_bf16={0x%x, 0x%x}, NewZA=0x%x\n",
+                             zn_ptr[2*j], zn_ptr[2*j+1],
+                             zm_ptr[2*i], zm_ptr[2*i+1], acc);
+                }
+            }
+        }
+    '''
+
+    # Instantiate BFMOP4A:
+    #   TPSElem (Source) = uint16_t (representing BF16)
+    #   TPDElem (Dest)   = uint32_t (FP32)
+    smeFmop4aInst('bfmop4a', 'Bfmop4a', 'MatrixOPOp', ['uint16_t, uint32_t'], bfmop4aCode)
+
+
     # LD1B
     smeLd1xInst('ld1b', 'Ld1b', 'MemReadOp', ['uint8_t'])
 

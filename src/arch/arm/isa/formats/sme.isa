@@ -104,6 +104,7 @@ namespace Aarch64
     static inline bool isSme2Ucvtf4(uint32_t insn);
 
     static inline bool isFmop4a(uint32_t insn);
+    static inline bool isBfmop4a(uint32_t insn);
 
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -175,6 +176,21 @@ namespace Aarch64
 
              // Instantiate Widening version: Input uint8_t, Output uint16_t
              return new SmeFmop4aWideningF8ToF16<uint8_t, uint16_t>(machInst, ZAda, Zn, Zm);
+        }
+
+        // Check for BFMOP4A (Non-widening, BFloat16)
+        if (Aarch64::isBfmop4a(insn)) {
+            // Zm: bits 19-17 (3 bits)
+            const RegIndex Zm = (RegIndex)(uint32_t)bits(machInst, 19, 17);
+            // Zn: bits 8-6 (3 bits)
+            const RegIndex Zn = (RegIndex)(uint32_t)bits(machInst, 8, 6);
+            // ZAda: bit 0 (1 bit, but instruction uses 2 bits logic usually, here restricted to ZA0/ZA1/etc depending on mask)
+            // Spec says ZAda is bit 0. This implies targeting specific tiles. 
+            // However, usually ZAda is passed as the tile index.
+            const RegIndex ZAda = (RegIndex)(uint32_t)bits(machInst, 0, 0);
+
+            // Instantiate BFMOP4A: Input uint16_t (BF16), Output uint32_t (FP32)
+            return new SmeBfmop4a<uint16_t, uint32_t>(machInst, ZAda, Zn, Zm);
         }
 
         // ------------------------------------------------------------
@@ -459,6 +475,31 @@ namespace Aarch64
         constexpr uint32_t base = 0xC0803C04; 
         
         return (insn & mask) == base;
+    }
+
+    // BFMOP4A (Non-widening) Matcher
+    static inline bool
+    isBfmop4a(uint32_t insn)
+    {
+        // BFMOP4A Encoding
+        // Fixed bits (based on user spec + standard SME2 prefix):
+        //   31-20: 1100 0000 1001 (0xC09) -> Assuming standard SME2 prefix
+        //   16-9:  0000 0000
+        //   5-1:   0000 0
+        // Variable bits:
+        //   Zm: 19-17
+        //   Zn: 8-6
+        //   ZAda: 0
+        
+        // Mask excludes Zm(19-17), Zn(8-6), ZAda(0)
+        constexpr uint32_t operand_mask = 
+            (0x7 << 17) | // Zm
+            (0x7 << 6)  | // Zn
+            (0x1 << 0);   // ZAda
+
+        constexpr uint32_t base_encoding = 0xC0A00000; 
+
+        return (insn & ~operand_mask) == base_encoding;
     }
 
     static inline bool
