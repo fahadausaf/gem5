@@ -1295,30 +1295,49 @@ namespace Aarch64
     StaticInstPtr
     decodeSmeCvt(ExtMachInst machInst)
     {
-        const uint32_t insn = (uint32_t)machInst;
         
-        // Detect 4-register variant
-        const bool isScvtf4_mask = (insn & 0xfffffc00u) == 0xC132E000u;
-        const bool is4_reg = isScvtf4_mask;
+        // 1. Detect 4-register variant (Bits 21 and 20 pattern)
+        //    SCVTF/UCVTF 4-reg: 0xC132...
+        //    FCVTZU      4-reg: 0xC131...
+        //    Common feature: Bit 20 is 1.
+        const bool is4_reg = (bool)bits(machInst, 20);
 
-        // Check Bit 5 for Unsigned (UCVTF) vs Signed (SCVTF)
+        // 2. Detect Instruction Type
+        //    Bit 16 is the differentiator:
+        //    0 = SCVTF / UCVTF
+        //    1 = FCVTZU
+        const bool is_fcvtz = (bool)bits(machInst, 16);
+
+        // 3. Detect Unsigned bit (Bit 5)
         const bool isUnsigned = (bool)bits(machInst, 5);
 
-        // Zn is bits 9-6 (4 bits), Zd is bits 4-0 (5 bits)
-        // [Correct: You are correctly excluding the 'U' bit 5 from Zn]
+        // 4. Extract Registers (Same for all)
+        //    Zn is bits 9-6 (4 bits)
+        //    Zd is bits 4-0 (5 bits)
         const uint32_t n_base = (uint32_t)bits(machInst, 9, 6);
         const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
 
-        // Pack imm: Match the layout in isa_insts_sme.isa
+        // 5. Pack immediate
         uint64_t imm = 0;
-        imm |= (uint64_t)(d_base & 0x1F);            // bits 0-4
-        imm |= (uint64_t)((n_base & 0xF) << 5);      // bits 5-8
-        imm |= (uint64_t)((is4_reg ? 1 : 0) << 10);  // bit  10
+        imm |= (uint64_t)(d_base & 0x1F);            // 4:0
+        imm |= (uint64_t)((n_base & 0xF) << 5);      // 9:5
+        imm |= (uint64_t)((is4_reg ? 1 : 0) << 10);  // 10
 
-        if (isUnsigned) {
-            return new SmeUcvtfMv(machInst, imm);
+        // 6. Dispatch
+        if (is_fcvtz) {
+            // FCVTZU (Float -> Unsigned Int)
+            if (isUnsigned) {
+                return new SmeFcvtzuMv(machInst, imm);
+            } else {
+                return new SmeFcvtzsMv(machInst, imm); 
+            }
         } else {
-            return new SmeScvtfMv(machInst, imm);
+            // SCVTF / UCVTF (Int -> Float)
+            if (isUnsigned) {
+                return new SmeUcvtfMv(machInst, imm);
+            } else {
+                return new SmeScvtfMv(machInst, imm);
+            }
         }
     }
 

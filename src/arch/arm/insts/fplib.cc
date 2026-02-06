@@ -5281,6 +5281,34 @@ fplibFPToFixed(uint64_t op, int fbits, bool u, FPRounding rounding, FPSCR &fpscr
     return result;
 }
 
+template <>
+int32_t
+fplibFPToFixed(uint32_t op, int fbits, bool u, FPRounding rounding, FPSCR &fpscr)
+{
+    int flags = 0;
+    int sgn, exp;
+    uint32_t mnt, result;
+
+    // Unpack 32-bit float using FPCR
+    fp32_unpack(&sgn, &exp, &mnt, op, modeConv(fpscr), &flags);
+
+    // If NaN, set cumulative flag or take exception:
+    if (fp32_is_NaN(exp, mnt)) {
+        flags = FPLIB_IOC;
+        result = 0;
+    } else {
+        assert(fbits >= 0);
+        // Call 32-bit conversion helper
+        // 'u' determines if we saturate to Signed or Unsigned range
+        result = FPToFixed_32(sgn, exp + fbits, mnt, u, rounding, &flags);
+    }
+
+    set_fpscr0(fpscr, flags);
+
+    // Cast the raw bits (uint32_t) to the expected return type (int32_t)
+    return (int32_t)result;
+}
+
 static uint16_t
 fp16_cvtf(uint64_t a, int fbits, int u, int mode, int *flags)
 {

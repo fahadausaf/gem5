@@ -1947,52 +1947,6 @@ let {{
     # MOVA (vector to tile, two registers) — FEAT_SME2
     smeMovaVecToTile2RegsInst("mova", "MovaVecToTile2Regs", "MatrixMovOp")
 
-    # SCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
-    scvtfCode = r'''
-        // SME2 multi-vector SCVTF: signed int32 lanes -> FP32 (result bits in Z regs)
-        FPSCR fpscr = (FPSCR)Fpscr;
-        const auto rnd = FPCRRounding(fpscr);
-
-        // imm layout (as you described / assumed in smeCvtMvInst):
-        //   [ 4:0]  d_group
-        //   [ 9:5]  n_group
-        //   [11:10] nreg_code   (0 => 2 regs, else 4 regs)
-        const uint32_t raw = (uint32_t)imm;
-        const uint32_t d_group   = (raw >> 0) & 0x1F;
-        const uint32_t n_group   = (raw >> 5) & 0x1F;
-        const uint32_t nreg_code = (raw >> 10) & 0x3;
-        const uint32_t nreg      = (nreg_code == 0) ? 2 : 4;
-
-        // Expand group indices to actual Z register indices
-        const uint32_t zd_base = d_group * nreg;
-        const uint32_t zn_base = n_group * nreg;
-
-        // Number of 32-bit lanes in the current SME vector length
-        const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
-        const uint32_t elements = VL_bytes / 4;
-
-        for (uint32_t r = 0; r < nreg; ++r) {
-            const uint32_t zn_idx = zn_base + r;
-            const uint32_t zd_idx = zd_base + r;
-
-            ArmISA::VecRegContainer zn, zd;
-            xc->tcBase()->getReg(ArmISA::vecRegClass[zn_idx], &zn);
-            xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
-
-            const int32_t *in  = (const int32_t*)zn.as<uint8_t>();
-            uint32_t *out      = (uint32_t*)zd.as<uint8_t>();
-
-            for (uint32_t e = 0; e < elements; ++e) {
-                int64_t s  = (int64_t)in[e];     // preserve sign
-                uint64_t op = (uint64_t)s;       // pass as 64-bit payload
-                out[e] = ArmISA::fplibFixedToFP<uint32_t>(op, 0, false, rnd, fpscr);
-            }
-
-
-            xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
-        }
-    '''
-
     # UCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
     ucvtfCode = r'''
         // SME2 multi-vector UCVTF: unsigned int32 lanes -> FP32 (result bits in Z regs)
@@ -2046,12 +2000,149 @@ let {{
             xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
         }
     '''
-
     smeCvtMvInst("ucvtf", "UcvtfMv", "SimdFloatCvtOp", ucvtfCode)
 
-    
     # SCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
+    scvtfCode = r'''
+        // SME2 multi-vector SCVTF: signed int32 lanes -> FP32
+        FPSCR fpscr = (FPSCR)Fpscr;
+        const auto rnd = FPCRRounding(fpscr);
+
+        // Imm layout (Same as UCVTF):
+        //   [ 4:0]  d_group (Zd)
+        //   [ 8:5]  n_group (Zn - 4 bits)
+        //   [10]    nreg_code
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t d_group   = (raw >> 0) & 0x1F;
+        const uint32_t n_group   = (raw >> 5) & 0x0F; 
+        const uint32_t nreg_code = (raw >> 10) & 0x1; 
+        const uint32_t nreg      = (nreg_code == 0) ? 2 : 4;
+
+        const uint32_t zd_base = d_group * nreg;
+        const uint32_t zn_base = n_group * nreg;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+        const uint32_t elements = VL_bytes / 4;
+
+        for (uint32_t r = 0; r < nreg; ++r) {
+            const uint32_t zn_idx = zn_base + r;
+            const uint32_t zd_idx = zd_base + r;
+
+            ArmISA::VecRegContainer zn, zd;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zn_idx], &zn);
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
+            
+            // Read input as raw 32-bit values
+            const uint32_t *in  = (const uint32_t*)zn.as<uint8_t>();
+            uint32_t *out       = (uint32_t*)zd.as<uint8_t>();
+
+            for (uint32_t e = 0; e < elements; ++e) {
+                uint64_t op = (uint64_t)in[e];
+                
+                // CHANGE FOR SCVTF:
+                // 3rd argument 'unsigned' set to FALSE.
+                // This tells the library to treat the input 'op' bits as signed int32.
+                out[e] = ArmISA::fplibFixedToFP<uint32_t>(op, 0, false, rnd, fpscr);
+            }
+
+            xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+        }
+    '''
+
     smeCvtMvInst("scvtf", "ScvtfMv", "SimdFloatCvtOp", scvtfCode)
+
+    # FCVTZU (multi-vector, 2-reg and 4-reg) — FEAT_SME2
+    fcvtzuCode = r'''
+        // SME2 multi-vector FCVTZU: FP32 -> unsigned int32 (Rounding toward zero)
+        FPSCR fpscr = (FPSCR)Fpscr;
+
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t d_group   = (raw >> 0) & 0x1F;
+        const uint32_t n_group   = (raw >> 5) & 0x0F; 
+        const uint32_t nreg_code = (raw >> 10) & 0x1; 
+        const uint32_t nreg      = (nreg_code == 0) ? 2 : 4;
+
+        const uint32_t zd_base = d_group * nreg;
+        const uint32_t zn_base = n_group * nreg;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+        const uint32_t elements = VL_bytes / 4;
+
+        for (uint32_t r = 0; r < nreg; ++r) {
+            const uint32_t zn_idx = zn_base + r;
+            const uint32_t zd_idx = zd_base + r;
+
+            ArmISA::VecRegContainer zn, zd;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zn_idx], &zn);
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
+            
+            const uint32_t *in  = (const uint32_t*)zn.as<uint8_t>();
+            uint32_t *out       = (uint32_t*)zd.as<uint8_t>();
+
+            for (uint32_t e = 0; e < elements; ++e) {
+                uint32_t op = in[e];
+                
+                // FIX: Specify <InputType, OutputType> explicitly
+                // <uint32_t (float bits), uint32_t (dest integer)>
+                out[e] = ArmISA::fplibFPToFixed<uint32_t, uint32_t>(
+                    op, 0, true, FPRounding_ZERO, fpscr);
+            }
+
+            xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+        }
+    '''
+    
+    smeCvtMvInst("fcvtzu", "FcvtzuMv", "SimdFloatCvtOp", fcvtzuCode)
+
+    
+    # FCVTZS (multi-vector, 2-reg and 4-reg) — FEAT_SME2
+    fcvtzsCode = r'''
+        // SME2 multi-vector FCVTZS: FP32 -> signed int32 (Rounding toward zero)
+        FPSCR fpscr = (FPSCR)Fpscr;
+
+        // Imm layout:
+        //   [ 4:0]  d_group (Zd)
+        //   [ 8:5]  n_group (Zn)
+        //   [10]    nreg_code
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t d_group   = (raw >> 0) & 0x1F;
+        const uint32_t n_group   = (raw >> 5) & 0x0F; 
+        const uint32_t nreg_code = (raw >> 10) & 0x1; 
+        const uint32_t nreg      = (nreg_code == 0) ? 2 : 4;
+
+        const uint32_t zd_base = d_group * nreg;
+        const uint32_t zn_base = n_group * nreg;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+        const uint32_t elements = VL_bytes / 4;
+
+        for (uint32_t r = 0; r < nreg; ++r) {
+            const uint32_t zn_idx = zn_base + r;
+            const uint32_t zd_idx = zd_base + r;
+
+            ArmISA::VecRegContainer zn, zd;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zn_idx], &zn);
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
+            
+            // Input:  Float (treated as uint32_t bits)
+            // Output: SIGNED Int32
+            const uint32_t *in  = (const uint32_t*)zn.as<uint8_t>();
+            int32_t *out        = (int32_t*)zd.as<uint8_t>();
+
+            for (uint32_t e = 0; e < elements; ++e) {
+                uint32_t op = in[e];
+                
+                // fplibFPToFixed args: (op, fbits, unsigned, rounding, fpscr)
+                // We use <uint32_t, int32_t> to specify Input=RawBits, Output=Signed
+                out[e] = ArmISA::fplibFPToFixed<uint32_t, int32_t>(
+                    op, 0, false, FPRounding_ZERO, fpscr);
+            }
+
+            xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+        }
+    '''
+
+    smeCvtMvInst("fcvtzs", "FcvtzsMv", "SimdFloatCvtOp", fcvtzsCode)
 
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
