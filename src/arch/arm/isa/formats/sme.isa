@@ -1296,21 +1296,24 @@ namespace Aarch64
     decodeSmeCvt(ExtMachInst machInst)
     {
         const uint32_t insn = (uint32_t)machInst;
+        
         // Detect 4-register variant
         const bool isScvtf4_mask = (insn & 0xfffffc00u) == 0xC132E000u;
         const bool is4_reg = isScvtf4_mask;
 
         // Check Bit 5 for Unsigned (UCVTF) vs Signed (SCVTF)
         const bool isUnsigned = (bool)bits(machInst, 5);
+
         // Zn is bits 9-6 (4 bits), Zd is bits 4-0 (5 bits)
+        // [Correct: You are correctly excluding the 'U' bit 5 from Zn]
         const uint32_t n_base = (uint32_t)bits(machInst, 9, 6);
         const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
 
-        // Pack imm: [7:0]=d_base, [15:8]=n_base, [17:16]=nreg_code (2->0,4->1)
+        // Pack imm: Match the layout in isa_insts_sme.isa
         uint64_t imm = 0;
-        imm |= (uint64_t)(d_base & 0xFF);
-        imm |= (uint64_t)((n_base & 0xFF) << 8);
-        imm |= (uint64_t)((is4_reg ? 1 : 0) << 16);
+        imm |= (uint64_t)(d_base & 0x1F);            // bits 0-4
+        imm |= (uint64_t)((n_base & 0xF) << 5);      // bits 5-8
+        imm |= (uint64_t)((is4_reg ? 1 : 0) << 10);  // bit  10
 
         if (isUnsigned) {
             return new SmeUcvtfMv(machInst, imm);
