@@ -103,6 +103,9 @@ namespace Aarch64
     static inline bool isSme2Ucvtf2(uint32_t insn);
     static inline bool isSme2Ucvtf4(uint32_t insn);
 
+    static inline bool isSme2FcvtFp16Fp8(uint32_t insn);
+    static inline bool isSme2FcvtFp32Fp16(uint32_t insn);
+
     static inline bool isFmop4a(uint32_t insn);
     static inline bool isBfmop4a(uint32_t insn);
     static inline bool isBfmop4aWidening(uint32_t insn);
@@ -247,7 +250,8 @@ namespace Aarch64
 
 
         if (Aarch64::isSme2Scvtf2(insn) || Aarch64::isSme2Scvtf4(insn) ||
-            Aarch64::isSme2Ucvtf2(insn) || Aarch64::isSme2Ucvtf4(insn)) {
+            Aarch64::isSme2Ucvtf2(insn) || Aarch64::isSme2Ucvtf4(insn) ||
+            Aarch64::isSme2FcvtFp16Fp8(insn) || Aarch64::isSme2FcvtFp32Fp16(insn)) {  
             return Aarch64::decodeSmeCvt(machInst);
         }
 
@@ -639,6 +643,27 @@ namespace Aarch64
     {
         // Matches 4-reg UCVTF (Bit 10 set)
         return (insn & 0xfffffc00u) == 0xC132E400u;
+    }
+
+    // FCVT (Narrowing FP16 -> FP8) matcher
+    static inline bool
+    isSme2FcvtFp16Fp8(uint32_t insn)
+    {
+        // Matches encoding 0xC120E000
+        // Key bits: 
+        //   [31:21] = 11000001001 (SME2 Cvt prefix)
+        //   [20]    = 0 (Not 4-reg)
+        //   [16]    = 0 (Not FCVTZ)
+        //   [10]    = 0 (Size bit 0 -> FP16->FP8)
+        return (insn & 0xfffffc00u) == 0xC120E000u;
+    }
+
+    // FCVT (Narrowing FP32 -> FP16) matcher
+    static inline bool
+    isSme2FcvtFp32Fp16(uint32_t insn)
+    {
+        // 0xC120E400: Same base as narrowing, but bit 10 is set (size bit)
+        return (insn & 0xfffffc00u) == 0xC120E400u;
     }
 
     StaticInstPtr
@@ -1295,6 +1320,31 @@ namespace Aarch64
     StaticInstPtr
     decodeSmeCvt(ExtMachInst machInst)
     {
+        
+        // Check for FCVT (Narrowing FP16 -> FP8)
+        if (Aarch64::isSme2FcvtFp16Fp8(machInst)) {
+             const uint32_t n_base = (uint32_t)bits(machInst, 9, 6);
+             const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
+
+             // Pack immediate: [4:0]=Zd, [9:5]=Zn
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_base & 0x1F);       
+             imm |= (uint64_t)((n_base & 0xF) << 5); 
+            
+             return new SmeFcvtFp16Fp8(machInst, imm);
+        }
+
+        // Check for FCVT (Narrowing FP32 -> FP16)
+        if (Aarch64::isSme2FcvtFp32Fp16(machInst)) {
+             const uint32_t n_base = (uint32_t)bits(machInst, 9, 6);
+             const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_base & 0x1F);       // 4:0
+             imm |= (uint64_t)((n_base & 0xF) << 5); // 9:5
+            
+             return new SmeFcvtFp32Fp16(machInst, imm);
+        }
         
         // 1. Detect 4-register variant (Bits 21 and 20 pattern)
         //    SCVTF/UCVTF 4-reg: 0xC132...

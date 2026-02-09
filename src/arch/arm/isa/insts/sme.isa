@@ -2144,6 +2144,135 @@ let {{
 
     smeCvtMvInst("fcvtzs", "FcvtzsMv", "SimdFloatCvtOp", fcvtzsCode)
 
+
+    # FCVT (Narrowing, FP16 to FP8) — FEAT_SME2 + FEAT_FP8
+    #
+    # Instruction: FCVT <Zd>.B, { <Zn1>.H - <Zn2>.H }
+    # Behavior: Converts two FP16 vectors (Zn, Zn+1) into one FP8 vector (Zd).
+    #           Results from Zn1 go to the lower half of Zd.
+    #           Results from Zn2 go to the upper half of Zd.
+    
+    fcvtNarrowingFp16Fp8Code = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+        const auto rnd = FPCRRounding(fpscr);
+
+        // Immediate Unpacking:
+        // [4:0] Zd (Destination)
+        // [9:5] Zn (Source Base)
+        // Note: The decoder packs these fields into 'imm' for us.
+        const uint32_t raw    = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F; 
+        const uint32_t zn_idx = (raw >> 5) & 0x1F; 
+
+        // Source registers: Pair (Zn, Zn+1)
+        const uint32_t zn1_idx = zn_idx;
+        const uint32_t zn2_idx = zn_idx + 1;
+
+        // Calculate Vector Length
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        // Source is FP16 (2 bytes per element)
+        // We process 'elements' number of items from EACH source vector.
+        const uint32_t elements = VL_bytes / 2;
+
+        // Access Registers
+        ArmISA::VecRegContainer zn1, zn2, zd;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zn1_idx], &zn1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zn2_idx], &zn2);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
+
+        // Pointers to data (Input=uint16_t, Output=uint8_t)
+        const uint16_t *in1 = (const uint16_t*)zn1.as<uint8_t>();
+        const uint16_t *in2 = (const uint16_t*)zn2.as<uint8_t>();
+        uint8_t *out = (uint8_t*)zd.as<uint8_t>();
+
+        // Execution Loop
+        for (uint32_t e = 0; e < elements; ++e) {
+            uint16_t val1 = in1[e];
+            uint16_t val2 = in2[e];
+
+            // Convert FP16 -> FP8
+            // Using fplibConvert helper (Specialized for uint16->uint8 in fplib.cc)
+            uint8_t res1 = ArmISA::fplibConvert<uint16_t, uint8_t>(val1, rnd, fpscr);
+            uint8_t res2 = ArmISA::fplibConvert<uint16_t, uint8_t>(val2, rnd, fpscr);
+
+            // Pack into Zd:
+            // Lower half [0..elements-1] gets result from Zn1
+            // Upper half [elements..2*elements-1] gets result from Zn2
+            out[e] = res1;
+            out[elements + e] = res2;
+        }
+
+        // Write back result
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    # Register the instruction generator
+    # Name: fcvt_fp16_fp8
+    # Class: FcvtFp16Fp8 (Matches the class name we used in formats/sme.isa)
+    # OpClass: SimdFloatCvtOp
+    smeCvtMvInst("fcvt_fp16_fp8", "FcvtFp16Fp8", "SimdFloatCvtOp", fcvtNarrowingFp16Fp8Code)
+
+    # FCVT (narrowing, FP32 to FP16) — FEAT_SME2
+    #
+    # Instruction: FCVT <Zd>.H, { <Zn1>.S - <Zn2>.S }
+    # Behavior: Converts two FP32 vectors (Zn, Zn+1) into one FP16 vector (Zd)
+    #
+    fcvtNarrowingFp32Fp16Code = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+        const auto rnd = FPCRRounding(fpscr);
+
+        // Immediate Unpacking:
+        // [4:0] Zd (Destination)
+        // [9:5] Zn (Source Base)
+        const uint32_t raw    = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F; 
+        const uint32_t zn_idx = (raw >> 5) & 0x1F; 
+
+        // Source registers: Pair (Zn, Zn+1)
+        const uint32_t zn1_idx = zn_idx;
+        const uint32_t zn2_idx = zn_idx + 1;
+
+        // Calculate Vector Length
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        // Source is FP32 (4 bytes per element)
+        const uint32_t elements = VL_bytes / 4;
+
+        // Access Registers
+        ArmISA::VecRegContainer zn1, zn2, zd;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zn1_idx], &zn1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zn2_idx], &zn2);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
+
+        // Pointers to data (Input=uint32_t, Output=uint16_t)
+        const uint32_t *in1 = (const uint32_t*)zn1.as<uint8_t>();
+        const uint32_t *in2 = (const uint32_t*)zn2.as<uint8_t>();
+        uint16_t *out = (uint16_t*)zd.as<uint8_t>();
+
+        // Execution Loop
+        for (uint32_t e = 0; e < elements; ++e) {
+            uint32_t val1 = in1[e];
+            uint32_t val2 = in2[e];
+
+            // Convert FP32 -> FP16
+            // Using standard fplibConvert helper
+            uint16_t res1 = ArmISA::fplibConvert<uint32_t, uint16_t>(val1, rnd, fpscr);
+            uint16_t res2 = ArmISA::fplibConvert<uint32_t, uint16_t>(val2, rnd, fpscr);
+
+            // Pack into Zd:
+            // Lower half [0..elements-1] gets result from Zn1
+            // Upper half [elements..2*elements-1] gets result from Zn2
+            out[e] = res1;
+            out[elements + e] = res2;
+        }
+
+        // Write back result
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    smeCvtMvInst("fcvt_fp32_fp16", "FcvtFp32Fp16", "SimdFloatCvtOp", fcvtNarrowingFp32Fp16Code)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 
