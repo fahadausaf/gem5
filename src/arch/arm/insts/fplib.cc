@@ -5377,6 +5377,73 @@ fplibConvert<uint16_t, uint8_t>(uint16_t op, FPRounding rounding, FPSCR &fpscr)
 // FP32 to FP16 conversion
 template uint16_t fplibConvert<uint32_t, uint16_t>(uint32_t op, FPRounding rounding, FPSCR &fpscr);
 
+// SPECIALIZATION: Convert FP32 (uint32_t) to FP8 (uint8_t)
+// Note: Defaults to E5M2 format
+template <>
+uint8_t
+fplibConvert<uint32_t, uint8_t>(uint32_t op, FPRounding rounding, FPSCR &fpscr)
+{
+    int flags = 0;
+    int sgn, exp;
+    uint32_t mnt;
+
+    // 1. Unpack FP32
+    //    Format: 1 Sign, 8 Exp, 23 Mantissa
+    fp32_unpack(&sgn, &exp, &mnt, op, modeConv(fpscr), &flags);
+
+    if (fp32_is_NaN(exp, mnt)) {
+        flags = FPLIB_IOC; 
+        set_fpscr0(fpscr, flags);
+        return 0x7F; // Default NaN for E5M2
+    }
+
+    // 2. Convert to FP8 (E5M2)
+    //    Target: 1 Sign, 5 Exp, 2 Mantissa
+    
+    // Extract top 2 bits of mantissa (FP32 mnt is 23 bits)
+    // We want bits [22:21]. Round using bits [20:0].
+    uint32_t mant_target = (mnt >> 21) & 0x3; 
+    uint32_t round_bits  = mnt & 0x1FFFFF; 
+    
+    bool round_up = false;
+    // Round bit is bit 20 (mask 0x100000)
+    if (round_bits > 0x100000) round_up = true; // > 0.5
+    else if (round_bits == 0x100000) {          // == 0.5
+        if (mant_target & 1) round_up = true; // Odd -> Round up
+    }
+
+    if (round_up) {
+        mant_target++;
+        if (mant_target > 3) {
+            mant_target = 0;
+            exp++;
+        }
+    }
+
+    // Check Exponent Overflow/Underflow
+    // FP32 bias is 127. FP8 bias is 15. 'exp' here is UNBIASED.
+    if (exp > 15) { 
+         flags |= FPLIB_OFC | FPLIB_IXC;
+         exp = 16; mant_target = 0; // Infinity
+    } else if (exp < -14) {
+         if (fpscr.fz) {
+             exp = -15; mant_target = 0;
+             flags |= FPLIB_UFC;
+         }
+    }
+
+    // Pack Result
+    int exp_encoded_val = exp + 15;
+    if (exp_encoded_val < 0) exp_encoded_val = 0; 
+    if (exp_encoded_val > 31) exp_encoded_val = 31;
+
+    uint32_t exp_encoded = (uint32_t)exp_encoded_val;
+    uint8_t result = (sgn << 7) | (exp_encoded << 2) | (mant_target & 0x3);
+
+    set_fpscr0(fpscr, flags);
+    return result;
+}
+
 static uint16_t
 fp16_cvtf(uint64_t a, int fbits, int u, int mode, int *flags)
 {

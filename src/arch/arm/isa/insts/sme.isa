@@ -2273,6 +2273,69 @@ let {{
 
     smeCvtMvInst("fcvt_fp32_fp16", "FcvtFp32Fp16", "SimdFloatCvtOp", fcvtNarrowingFp32Fp16Code)
 
+    
+    # FCVT (Narrowing, FP32 to FP8) — FEAT_SME2 + FEAT_FP8
+    #
+    # Instruction: FCVT <Zd>.B, { <Zn1>.S - <Zn4>.S }
+    # Behavior: Converts four FP32 vectors (Zn..Zn+3) into one FP8 vector (Zd).
+    #           This is a 4:1 compression.
+    
+    fcvtNarrowingFp32Fp8Code = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+        const auto rnd = FPCRRounding(fpscr);
+
+        // Immediate Unpacking:
+        // [4:0] Zd (Destination)
+        // [9:5] Zn (Source Base) - 4-register group
+        const uint32_t raw    = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F; 
+        const uint32_t zn_idx = (raw >> 5) & 0x1F; 
+
+        // Calculate Vector Length
+        // Source is FP32 (4 bytes).
+        // For VL=128 bits, Source Elements = 4 per vector.
+        // Total Dest Elements (FP8) = 16.
+        // 4 source vectors * 4 elements = 16 dest elements. Perfect fit.
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        const uint32_t elements_per_vec = VL_bytes / 4; 
+
+        // Access Destination Register
+        ArmISA::VecRegContainer zd;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
+        uint8_t *out = (uint8_t*)zd.as<uint8_t>();
+
+        // Loop over the 4 source registers
+        for (int r = 0; r < 4; ++r) {
+            const uint32_t curr_zn_idx = zn_idx + r;
+            
+            // Access Source Register
+            ArmISA::VecRegContainer zn;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[curr_zn_idx], &zn);
+            const uint32_t *in = (const uint32_t*)zn.as<uint8_t>();
+
+            // Process elements for this vector
+            for (uint32_t e = 0; e < elements_per_vec; ++e) {
+                uint32_t val = in[e];
+
+                // Convert FP32 -> FP8
+                // Using fplibConvert specialized for uint32->uint8
+                uint8_t res = ArmISA::fplibConvert<uint32_t, uint8_t>(val, rnd, fpscr);
+
+                // Pack into Zd:
+                // Offset = (r * elements_per_vec) + e
+                out[(r * elements_per_vec) + e] = res;
+            }
+        }
+
+        // Write back result
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    # Register the instruction generator
+    # Name: fcvt_fp32_fp8
+    # Class: FcvtFp32Fp8
+    smeCvtMvInst("fcvt_fp32_fp8", "FcvtFp32Fp8", "SimdFloatCvtOp", fcvtNarrowingFp32Fp8Code)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 
