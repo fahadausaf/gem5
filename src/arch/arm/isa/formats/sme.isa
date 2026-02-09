@@ -104,6 +104,7 @@ namespace Aarch64
     static inline bool isSme2FcvtFp16Fp8(uint32_t insn);
     static inline bool isSme2FcvtFp32Fp16(uint32_t insn);
     static inline bool isSme2FcvtFp32Fp8(uint32_t insn);
+    static inline bool isSme2FcvtnFp32Fp8(uint32_t insn);
 
     static inline bool isFmop4a(uint32_t insn);
     static inline bool isBfmop4a(uint32_t insn);
@@ -676,6 +677,14 @@ namespace Aarch64
         //   [20]    = 1 (4-register variant)
         //   [17]    = 0 (FCVT)
         return (insn & 0xfffffc00u) == 0xC130E000u;
+    }
+
+    // FCVTN (Narrowing FP32 -> FP8) matcher
+    static inline bool
+    isSme2FcvtnFp32Fp8(uint32_t insn)
+    {
+        // Checks that Bit 5 is 1 (0xC130E020)
+        return (insn & 0xfffffc20u) == 0xC130E020u;
     }
 
     StaticInstPtr
@@ -1368,6 +1377,19 @@ namespace Aarch64
              imm |= (uint64_t)((n_base & 0xF) << 5); 
             
              return new SmeFcvtFp32Fp8(machInst, imm);
+        }
+
+        // Check for FCVTN (Narrowing FP32 -> FP8, 4-reg)
+        if (Aarch64::isSme2FcvtnFp32Fp8(machInst)) {
+             const uint32_t n_base = (uint32_t)bits(machInst, 9, 6);
+             const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_base & 0x1F);        
+             imm |= (uint64_t)((n_base & 0xF) << 5); 
+            
+             // Assumes you have created the class SmeFcvtnFp32Fp8
+             return new SmeFcvtnFp32Fp8(machInst, imm);
         }
         
         // 1. Detect 4-register variant (Bits 21 and 20 pattern)

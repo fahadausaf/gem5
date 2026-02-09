@@ -2336,6 +2336,12 @@ let {{
     # Class: FcvtFp32Fp8
     smeCvtMvInst("fcvt_fp32_fp8", "FcvtFp32Fp8", "SimdFloatCvtOp", fcvtNarrowingFp32Fp8Code)
 
+    # FCVTN (Narrowing, FP32 to FP8) — FEAT_SME2 + FEAT_FP8
+    # Functionally identical to FCVT (FP32->FP8), just a different mnemonic/encoding.
+    # We reuse fcvtNarrowingFp32Fp8Code.
+    # Resulting Class: SmeFcvtnFp32Fp8
+    smeCvtMvInst("fcvtn_fp32_fp8", "FcvtnFp32Fp8", "SimdFloatCvtOp", fcvtNarrowingFp32Fp8Code)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 
