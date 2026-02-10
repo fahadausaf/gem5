@@ -108,6 +108,7 @@ namespace Aarch64
     static inline bool isSme2FcvtnFp32Fp16(uint32_t insn);
     static inline bool isSme2Bfcvt(uint32_t insn);
     static inline bool isSme2BfcvtFp32Bf16(uint32_t insn);
+    static inline bool isSme2Bfcvtn(uint32_t insn);
 
     static inline bool isFmop4a(uint32_t insn);
     static inline bool isBfmop4a(uint32_t insn);
@@ -256,7 +257,8 @@ namespace Aarch64
             Aarch64::isSme2Ucvtf2(insn) || Aarch64::isSme2Ucvtf4(insn) ||
             Aarch64::isSme2FcvtFp16Fp8(insn) || Aarch64::isSme2FcvtFp32Fp16(insn) || 
             Aarch64::isSme2FcvtFp32Fp8(insn) || Aarch64::isSme2Bfcvt(insn) ||
-            Aarch64::isSme2BfcvtFp32Bf16(insn)) {  
+            Aarch64::isSme2BfcvtFp32Bf16(insn) ||
+            Aarch64::isSme2Bfcvtn(insn)) {  
             return Aarch64::decodeSmeCvt(machInst);
         }
 
@@ -711,6 +713,13 @@ namespace Aarch64
     isSme2BfcvtFp32Bf16(uint32_t insn)
     {
         return (insn & 0xfffffc00u) == 0xC124E000u;
+    }
+
+    // BFCVTN
+    static inline bool
+    isSme2Bfcvtn(uint32_t insn)
+    {
+        return (insn & 0xfffffc20u) == 0xC160E020u;
     }
 
     StaticInstPtr
@@ -1429,6 +1438,19 @@ namespace Aarch64
              imm |= (uint64_t)((n_base & 0xF) << 5); 
             
              return new SmeFcvtnFp32Fp16(machInst, imm);
+        }
+
+        // Check for BFCVTN (Narrowing FP32 -> BFloat16)
+        if (Aarch64::isSme2Bfcvtn(machInst)) {
+             const uint32_t n_base = (uint32_t)bits(machInst, 9, 6);
+             const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
+
+             // Reuse same immediate packing as FCVTN
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_base & 0x1F);
+             imm |= (uint64_t)((n_base & 0xF) << 5);
+
+             return new SmeBfcvtn(machInst, imm);
         }
 
         // Check for BFCVT (BFloat16 -> FP8)
