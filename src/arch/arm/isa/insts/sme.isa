@@ -2346,6 +2346,64 @@ let {{
     # Reuses the exact same logic code: fcvtNarrowingFp32Fp16Code
     smeCvtMvInst("fcvtn_fp32_fp16", "FcvtnFp32Fp16", "SimdFloatCvtOp", fcvtNarrowingFp32Fp16Code)
 
+
+    # BFCVT (BFloat16 to 8-bit floating-point)
+    #
+    # Instruction: BFCVT <Zd>.B, { <Zn1>.H - <Zn2>.H }
+    # Behavior: Converts pairs of BFloat16 vectors to one FP8 vector.
+    # Logic: BFloat16 bits -> FP32 bits -> FP8 Conversion
+    
+    bfcvtCode = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+        const auto rnd = FPCRRounding(fpscr);
+
+        // Immediate Unpacking (Same as FCVT)
+        const uint32_t raw    = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F; 
+        const uint32_t zn_idx = (raw >> 5) & 0x1F; 
+
+        const uint32_t zn1_idx = zn_idx;
+        const uint32_t zn2_idx = zn_idx + 1;
+
+        // VL is in bytes. Elements are 16-bit (2 bytes).
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        const uint32_t elements = VL_bytes / 2;
+
+        ArmISA::VecRegContainer zn1, zn2, zd;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zn1_idx], &zn1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zn2_idx], &zn2);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
+
+        const uint16_t *in1 = (const uint16_t*)zn1.as<uint8_t>();
+        const uint16_t *in2 = (const uint16_t*)zn2.as<uint8_t>();
+        uint8_t *out = (uint8_t*)zd.as<uint8_t>();
+
+        // Helper: BFloat16 -> FP32 (bits)
+        auto bf16_to_fp32 = [](uint16_t b) -> uint32_t {
+            return (uint32_t)b << 16;
+        };
+
+        for (uint32_t e = 0; e < elements; ++e) {
+            // Expand BFloat16 to FP32
+            uint32_t val1_32 = bf16_to_fp32(in1[e]);
+            uint32_t val2_32 = bf16_to_fp32(in2[e]);
+
+            // Convert FP32 -> FP8 (Using existing helper)
+            // Note: We use <uint32_t, uint8_t> specialization
+            uint8_t res1 = ArmISA::fplibConvert<uint32_t, uint8_t>(val1_32, rnd, fpscr);
+            uint8_t res2 = ArmISA::fplibConvert<uint32_t, uint8_t>(val2_32, rnd, fpscr);
+
+            // Pack interleaved
+            out[e] = res1;
+            out[elements + e] = res2;
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    # Register the instruction
+    smeCvtMvInst("bfcvt", "Bfcvt", "SimdFloatCvtOp", bfcvtCode)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 

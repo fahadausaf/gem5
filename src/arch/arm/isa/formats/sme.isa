@@ -106,6 +106,7 @@ namespace Aarch64
     static inline bool isSme2FcvtFp32Fp8(uint32_t insn);
     static inline bool isSme2FcvtnFp32Fp8(uint32_t insn);
     static inline bool isSme2FcvtnFp32Fp16(uint32_t insn);
+    static inline bool isSme2Bfcvt(uint32_t insn);
 
     static inline bool isFmop4a(uint32_t insn);
     static inline bool isBfmop4a(uint32_t insn);
@@ -253,7 +254,7 @@ namespace Aarch64
         if (Aarch64::isSme2Scvtf2(insn) || Aarch64::isSme2Scvtf4(insn) ||
             Aarch64::isSme2Ucvtf2(insn) || Aarch64::isSme2Ucvtf4(insn) ||
             Aarch64::isSme2FcvtFp16Fp8(insn) || Aarch64::isSme2FcvtFp32Fp16(insn) || 
-            Aarch64::isSme2FcvtFp32Fp8(insn)) {  
+            Aarch64::isSme2FcvtFp32Fp8(insn) || Aarch64::isSme2Bfcvt(insn)) {  
             return Aarch64::decodeSmeCvt(machInst);
         }
 
@@ -694,6 +695,14 @@ namespace Aarch64
     {
         // 0xC120E420: Bits 31-10 match, Bit 5 is 1
         return (insn & 0xfffffc20u) == 0xC120E420u;
+    }
+
+    // BFCVT (BFloat16 -> FP8) matcher
+    static inline bool
+    isSme2Bfcvt(uint32_t insn)
+    {
+        // 0xC140E000: Bit 21 is 1
+        return (insn & 0xffdffc00u) == 0xC140E000u;
     }
 
     StaticInstPtr
@@ -1411,6 +1420,19 @@ namespace Aarch64
              imm |= (uint64_t)((n_base & 0xF) << 5); 
             
              return new SmeFcvtnFp32Fp16(machInst, imm);
+        }
+
+        // Check for BFCVT (BFloat16 -> FP8)
+        if (Aarch64::isSme2Bfcvt(machInst)) {
+             const uint32_t n_base = (uint32_t)bits(machInst, 9, 6);
+             const uint32_t d_base = (uint32_t)bits(machInst, 4, 0);
+
+             // Pack immediate exactly like FCVT
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_base & 0x1F);       
+             imm |= (uint64_t)((n_base & 0xF) << 5); 
+            
+             return new SmeBfcvt(machInst, imm);
         }
         
         // 1. Detect 4-register variant (Bits 21 and 20 pattern)
