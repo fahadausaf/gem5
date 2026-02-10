@@ -2404,6 +2404,69 @@ let {{
     # Register the instruction
     smeCvtMvInst("bfcvt", "Bfcvt", "SimdFloatCvtOp", bfcvtCode)
 
+    # BFCVT (Single-precision to BFloat16)
+    # Instruction: BFCVT <Zd>.H, { <Zn1>.S - <Zn2>.S }
+    # Behavior: Converts two FP32 vectors to one interleaved BFloat16 vector.
+    
+    bfcvtFp32Bf16Code = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+        // We use FPCR to control rounding if strictly required, 
+        // but BF16 usually implies specific rounding (RNE).
+        
+        const uint32_t raw    = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F; 
+        const uint32_t zn_idx = (raw >> 5) & 0x1F; 
+
+        // Source is 2 registers (Zn, Zn+1)
+        const uint32_t zn1_idx = zn_idx;
+        const uint32_t zn2_idx = zn_idx + 1;
+
+        // Source vector length (in bytes). Elements are FP32 (4 bytes).
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        const uint32_t elements = VL_bytes / 4;
+
+        ArmISA::VecRegContainer zn1, zn2, zd;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zn1_idx], &zn1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zn2_idx], &zn2);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd_idx], &zd);
+
+        // Input: FP32 (uint32_t bits)
+        const uint32_t *in1 = (const uint32_t*)zn1.as<uint8_t>();
+        const uint32_t *in2 = (const uint32_t*)zn2.as<uint8_t>();
+        
+        // Output: BFloat16 (uint16_t bits)
+        uint16_t *out = (uint16_t*)zd.as<uint8_t>();
+
+        // Helper: FP32 -> BFloat16 Conversion
+        // Standard behavior: Round to nearest even on the 16th bit position.
+        auto fp32_to_bf16 = [](uint32_t val) -> uint16_t {
+            if ((val & 0x7FFFFFFF) == 0) return 0; // +/- Zero
+            if ((val & 0x7F800000) == 0x7F800000) return val >> 16; // Inf/NaN
+
+            // Rounding Logic: Add 0x7FFF + (LSB & 1) to mantissa before shift
+            // LSB of BF16 is bit 16 of FP32.
+            uint32_t lsb = (val >> 16) & 1;
+            uint32_t rounding_bias = 0x7FFF + lsb;
+            return (uint16_t)((val + rounding_bias) >> 16);
+        };
+
+        for (uint32_t e = 0; e < elements; ++e) {
+            uint16_t res1 = fp32_to_bf16(in1[e]);
+            uint16_t res2 = fp32_to_bf16(in2[e]);
+
+            // Pack interleaved: Lower half = Zn1, Upper half = Zn2
+            out[e] = res1;
+            out[elements + e] = res2;
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    # Register the instruction
+    # Name: bfcvt_fp32_bf16
+    # Class: SmeBfcvtFp32Bf16 (matches decoder return)
+    smeCvtMvInst("bfcvt_fp32_bf16", "BfcvtFp32Bf16", "SimdFloatCvtOp", bfcvtFp32Bf16Code)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 
