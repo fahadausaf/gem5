@@ -2342,6 +2342,10 @@ let {{
     # Resulting Class: SmeFcvtnFp32Fp8
     smeCvtMvInst("fcvtn_fp32_fp8", "FcvtnFp32Fp8", "SimdFloatCvtOp", fcvtNarrowingFp32Fp8Code)
 
+    # FCVTN (Narrowing, FP32 to FP16)
+    # Reuses the exact same logic code: fcvtNarrowingFp32Fp16Code
+    smeCvtMvInst("fcvtn_fp32_fp16", "FcvtnFp32Fp16", "SimdFloatCvtOp", fcvtNarrowingFp32Fp16Code)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 
