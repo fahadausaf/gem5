@@ -109,6 +109,7 @@ namespace Aarch64
     static inline bool isSme2Bfcvt(uint32_t insn);
     static inline bool isSme2BfcvtFp32Bf16(uint32_t insn);
     static inline bool isSme2Bfcvtn(uint32_t insn);
+    static inline bool isSme2Fcvtl(uint32_t insn);
 
     static inline bool isFmop4a(uint32_t insn);
     static inline bool isBfmop4a(uint32_t insn);
@@ -257,8 +258,9 @@ namespace Aarch64
             Aarch64::isSme2Ucvtf2(insn) || Aarch64::isSme2Ucvtf4(insn) ||
             Aarch64::isSme2FcvtFp16Fp8(insn) || Aarch64::isSme2FcvtFp32Fp16(insn) || 
             Aarch64::isSme2FcvtFp32Fp8(insn) || Aarch64::isSme2Bfcvt(insn) ||
-            Aarch64::isSme2BfcvtFp32Bf16(insn) ||
-            Aarch64::isSme2Bfcvtn(insn)) {  
+            Aarch64::isSme2BfcvtFp32Bf16(insn) || Aarch64::isSme2Bfcvtn(insn) ||
+            Aarch64::isSme2Fcvtl(insn)) {   
+            
             return Aarch64::decodeSmeCvt(machInst);
         }
 
@@ -720,6 +722,15 @@ namespace Aarch64
     isSme2Bfcvtn(uint32_t insn)
     {
         return (insn & 0xfffffc20u) == 0xC160E020u;
+    }
+
+    // FCVTL (Widening, FP16 -> De-interleaved FP32)
+    static inline bool
+    isSme2Fcvtl(uint32_t insn)
+    {
+        // Base: 1100 0001 1000 0000 1110 00nn nnn0 dddd 1  (0xC180E001)
+        // Mask: 1111 1111 1110 0000 1111 1100 0000 0001  (0xFFE0FC01)
+        return (insn & 0xffe0fc01u) == 0xC180E001u;
     }
 
     StaticInstPtr
@@ -1477,6 +1488,18 @@ namespace Aarch64
              imm |= (uint64_t)((n_base & 0xF) << 5); 
             
              return new SmeBfcvtFp32Bf16(machInst, imm);
+        }
+
+        // Check for FCVTL (Widening FP16 -> FP32)
+        if (Aarch64::isSme2Fcvtl((uint32_t)machInst)) {
+             const uint32_t n_group = (uint32_t)bits(machInst, 9, 6);
+             const uint32_t d_group = (uint32_t)bits(machInst, 4, 1);
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_group & 0xF);       
+             imm |= (uint64_t)((n_group & 0x1F) << 4);
+
+             return new SmeFcvtl(machInst, imm);
         }
         
         // 1. Detect 4-register variant (Bits 21 and 20 pattern)

@@ -2527,6 +2527,56 @@ let {{
 
     smeCvtMvInst("bfcvtn", "Bfcvtn", "SimdFloatCvtOp", bfcvtnCode)
 
+    # FCVTL (Widening, FP16 -> De-interleaved FP32)
+    fcvtlCode = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+        const auto rnd = FPCRRounding(fpscr);
+
+        // Immediate Unpacking
+        const uint32_t raw     = (uint32_t)imm;
+        const uint32_t d_group = (raw >> 0) & 0xF;   // 4 bits
+        const uint32_t n_idx   = (raw >> 4) & 0x1F;  // 5 bits (Zn)
+
+        // Destination registers: Pair (Zd, Zd+1)
+        // d_group is the "pair index", so actual reg index is d_group * 2
+        const uint32_t zd1_idx = d_group * 2;
+        const uint32_t zd2_idx = zd1_idx + 1;
+
+        // Calculate Vector Length (Output is FP32)
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        const uint32_t eCount   = VL_bytes / 4; // Number of FP32 elements
+
+        // Access Registers
+        ArmISA::VecRegContainer zn, zd1, zd2;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[n_idx], &zn);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd1_idx], &zd1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd2_idx], &zd2);
+
+        const uint16_t *in = (const uint16_t*)zn.as<uint8_t>();
+        uint32_t *out1 = (uint32_t*)zd1.as<uint8_t>();
+        uint32_t *out2 = (uint32_t*)zd2.as<uint8_t>();
+
+        // Execution Loop
+        for (uint32_t e = 0; e < eCount; ++e) {
+            // Source indices: 2*e (even) and 2*e+1 (odd)
+            uint16_t src_even = in[2 * e];
+            uint16_t src_odd  = in[2 * e + 1];
+
+            // Convert FP16 -> FP32
+            uint32_t res1 = ArmISA::fplibConvert<uint16_t, uint32_t>(src_even, rnd, fpscr);
+            uint32_t res2 = ArmISA::fplibConvert<uint16_t, uint32_t>(src_odd, rnd, fpscr);
+
+            // Write de-interleaved results
+            out1[e] = res1;
+            out2[e] = res2;
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd1_idx], &zd1);
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd2_idx], &zd2);
+    '''
+
+    smeCvtMvInst("fcvtl", "Fcvtl", "SimdFloatCvtOp", fcvtlCode)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 
