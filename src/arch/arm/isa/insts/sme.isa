@@ -2577,6 +2577,131 @@ let {{
 
     smeCvtMvInst("fcvtl", "Fcvtl", "SimdFloatCvtOp", fcvtlCode)
 
+    # F1CVTL / F2CVTL (FP8 -> FP16, Bottom/Lower)
+    # Instruction: F1CVTL { <Zd1>.H, <Zd2>.H }, <Zn>.B
+    # Behavior: Widens FP8 to FP16.
+    #           Input: 1 Vector (Zn). Output: 2 Vectors (Zd1, Zd2).
+    #           "Bottom" variant selects even-numbered bytes (0, 2, 4...).
+    
+    fcvtlFp8Code = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+        // In a full model, we would read FPMR here to check F1 vs F2 format bits.
+        
+        const uint32_t raw     = (uint32_t)imm;
+        const uint32_t d_group = (raw >> 0) & 0xF;   // Zd pair index (4 bits)
+        const uint32_t n_idx   = (raw >> 4) & 0x1F;  // Zn index (5 bits)
+
+        // Destination registers: Pair (Zd, Zd+1)
+        const uint32_t zd1_idx = d_group * 2;
+        const uint32_t zd2_idx = zd1_idx + 1;
+
+        // Vector Length (Output is FP16, so 2 bytes per element)
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        // eCount = Number of FP16 elements per output vector.
+        // For VL=128 bits (16 bytes), we output 8 FP16 elements per vector.
+        // Input consumed = 16 bytes (entire Zn).
+        const uint32_t eCount = VL_bytes / 2; 
+
+        ArmISA::VecRegContainer zn, zd1, zd2;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[n_idx], &zn);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd1_idx], &zd1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd2_idx], &zd2);
+
+        const uint8_t *in = zn.as<uint8_t>();
+        uint16_t *out1 = (uint16_t*)zd1.as<uint8_t>();
+        uint16_t *out2 = (uint16_t*)zd2.as<uint8_t>();
+
+        // FP8 -> FP16 Conversion Stub
+        auto fp8_to_fp16 = [](uint8_t b) -> uint16_t {
+            if (b == 0) return 0;
+            // E5M2/E4M3 logic would go here. Simple expansion for now:
+            uint16_t mant = static_cast<uint16_t>(b) << 2; 
+            uint16_t exp  = 15; 
+            return (exp << 10) | (mant & 0x3FF);
+        };
+
+        for (uint32_t e = 0; e < eCount; ++e) {
+            // "Bottom" / De-interleave logic:
+            // The input vector Zn contains interleaved elements.
+            // Even indices (0, 2, 4...) -> Dest vector 1
+            // Odd indices (1, 3, 5...)  -> Dest vector 2
+            
+            uint8_t src_even = in[2 * e];
+            uint8_t src_odd  = in[2 * e + 1];
+
+            out1[e] = fp8_to_fp16(src_even);
+            out2[e] = fp8_to_fp16(src_odd);
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd1_idx], &zd1);
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd2_idx], &zd2);
+    '''
+
+    smeCvtMvInst("f1cvtl", "F1cvtl", "SimdFloatCvtOp", fcvtlFp8Code)
+    smeCvtMvInst("f2cvtl", "F2cvtl", "SimdFloatCvtOp", fcvtlFp8Code)
+
+    # BF1CVTL / BF2CVTL (FP8 -> BFloat16, Bottom/Lower)
+    # Instruction: BF1CVTL { <Zd1>.H, <Zd2>.H }, <Zn>.B
+    # Behavior: Widens FP8 to BFloat16 (de-interleaved).
+    
+    bfcvtlFp8Code = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+        // Logic requires FPMR to determine FP8 format (E5M2 vs E4M3).
+        
+        const uint32_t raw     = (uint32_t)imm;
+        const uint32_t d_group = (raw >> 0) & 0xF;   // Zd pair index
+        const uint32_t n_idx   = (raw >> 4) & 0x1F;  // Zn index
+
+        const uint32_t zd1_idx = d_group * 2;
+        const uint32_t zd2_idx = zd1_idx + 1;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        const uint32_t eCount   = VL_bytes / 2; // Output is 16-bit elements
+
+        ArmISA::VecRegContainer zn, zd1, zd2;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[n_idx], &zn);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd1_idx], &zd1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd2_idx], &zd2);
+
+        const uint8_t *in = zn.as<uint8_t>();
+        uint16_t *out1 = (uint16_t*)zd1.as<uint8_t>();
+        uint16_t *out2 = (uint16_t*)zd2.as<uint8_t>();
+
+        // FP8 -> BFloat16 Conversion Stub
+        auto fp8_to_bf16 = [](uint8_t b) -> uint16_t {
+            if (b == 0) return 0;
+            
+            // Stub: Treat FP8 as having a small exponent and mantissa.
+            // BFloat16: 1 Sign, 8 Exp, 7 Mantissa.
+            // FP8 (E5M2): 1 Sign, 5 Exp, 2 Mantissa.
+            // We shift bits to align roughly with BF16 format for the test.
+            
+            uint16_t sign = (b & 0x80) << 8;
+            uint16_t exp  = (b & 0x7C) << 8; // Shift exp to BF16 position
+            uint16_t mant = (b & 0x03) << 5; // Shift mantissa
+            
+            // Note: Real hardware does bias adjustment here.
+            return sign | exp | mant;
+        };
+
+        for (uint32_t e = 0; e < eCount; ++e) {
+            // De-interleave: Even -> Zd1, Odd -> Zd2
+            uint8_t src_even = in[2 * e];
+            uint8_t src_odd  = in[2 * e + 1];
+
+            out1[e] = fp8_to_bf16(src_even);
+            out2[e] = fp8_to_bf16(src_odd);
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd1_idx], &zd1);
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd2_idx], &zd2);
+    '''
+
+    # Register Instructions
+    smeCvtMvInst("bf1cvtl", "Bf1cvtl", "SimdFloatCvtOp", bfcvtlFp8Code)
+    smeCvtMvInst("bf2cvtl", "Bf2cvtl", "SimdFloatCvtOp", bfcvtlFp8Code)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 

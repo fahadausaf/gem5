@@ -110,6 +110,10 @@ namespace Aarch64
     static inline bool isSme2BfcvtFp32Bf16(uint32_t insn);
     static inline bool isSme2Bfcvtn(uint32_t insn);
     static inline bool isSme2Fcvtl(uint32_t insn);
+    static inline bool isSme2F1cvtl(uint32_t insn);
+    static inline bool isSme2F2cvtl(uint32_t insn);
+    static inline bool isSme2Bf1cvtl(uint32_t insn);
+    static inline bool isSme2Bf2cvtl(uint32_t insn);
 
     static inline bool isFmop4a(uint32_t insn);
     static inline bool isBfmop4a(uint32_t insn);
@@ -254,12 +258,17 @@ namespace Aarch64
         }
 
 
+        // In formats/sme.isa -> decodeSmeInst()
+
         if (Aarch64::isSme2Scvtf2(insn) || Aarch64::isSme2Scvtf4(insn) ||
             Aarch64::isSme2Ucvtf2(insn) || Aarch64::isSme2Ucvtf4(insn) ||
             Aarch64::isSme2FcvtFp16Fp8(insn) || Aarch64::isSme2FcvtFp32Fp16(insn) || 
             Aarch64::isSme2FcvtFp32Fp8(insn) || Aarch64::isSme2Bfcvt(insn) ||
             Aarch64::isSme2BfcvtFp32Bf16(insn) || Aarch64::isSme2Bfcvtn(insn) ||
-            Aarch64::isSme2Fcvtl(insn)) {   
+            Aarch64::isSme2Fcvtl(insn) ||
+            Aarch64::isSme2F1cvtl(insn) || Aarch64::isSme2F2cvtl(insn) ||
+            Aarch64::isSme2Bf1cvtl(insn) || 
+            Aarch64::isSme2Bf2cvtl(insn)) {   
             
             return Aarch64::decodeSmeCvt(machInst);
         }
@@ -731,6 +740,38 @@ namespace Aarch64
         // Base: 1100 0001 1000 0000 1110 00nn nnn0 dddd 1  (0xC180E001)
         // Mask: 1111 1111 1110 0000 1111 1100 0000 0001  (0xFFE0FC01)
         return (insn & 0xffe0fc01u) == 0xC180E001u;
+    }
+
+    // F1CVTL (FP8 -> FP16, Bottom)
+    // Base: 0xC126E001
+    // Mask: 0xFFFFFC01 (Checks all bits except 9:1)
+    static inline bool
+    isSme2F1cvtl(uint32_t insn)
+    {
+        return (insn & 0xfffffc01u) == 0xC126E001u;
+    }
+
+    // F2CVTL (FP8 -> FP16, Bottom)
+    // Base: 0xC1A6E001
+    // Mask: 0xFFFFFC01
+    static inline bool
+    isSme2F2cvtl(uint32_t insn)
+    {
+        return (insn & 0xfffffc01u) == 0xC1A6E001u;
+    }
+
+    // BF1CVTL (FP8 to BFloat16, Bottom, Format 1)
+    static inline bool
+    isSme2Bf1cvtl(uint32_t insn)
+    {
+        return (insn & 0xfffffc01u) == 0xC166E001u;
+    }
+
+    // BF2CVTL (FP8 to BFloat16, Bottom, Format 2)
+    static inline bool
+    isSme2Bf2cvtl(uint32_t insn)
+    {
+        return (insn & 0xfffffc01u) == 0xC1E6E001u;
     }
 
     StaticInstPtr
@@ -1501,6 +1542,55 @@ namespace Aarch64
 
              return new SmeFcvtl(machInst, imm);
         }
+
+        // F1CVTL (FP8 -> FP16 Bottom)
+        if (Aarch64::isSme2F1cvtl((uint32_t)machInst)) {
+             const uint32_t d_pair = (uint32_t)bits(machInst, 4, 1);
+             const uint32_t n_reg  = (uint32_t)bits(machInst, 9, 5);
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_pair & 0xF);       
+             imm |= (uint64_t)((n_reg & 0x1F) << 4); 
+
+             return new SmeF1cvtl(machInst, imm);
+        }
+
+        // F2CVTL (FP8 -> FP16 Bottom)
+        if (Aarch64::isSme2F2cvtl((uint32_t)machInst)) {
+             const uint32_t d_pair = (uint32_t)bits(machInst, 4, 1);
+             const uint32_t n_reg  = (uint32_t)bits(machInst, 9, 5);
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_pair & 0xF);       
+             imm |= (uint64_t)((n_reg & 0x1F) << 4); 
+
+             return new SmeF2cvtl(machInst, imm);
+        }
+
+        // BF1CVTL (FP8 -> BF16 Bottom)
+        if (Aarch64::isSme2Bf1cvtl((uint32_t)machInst)) {
+             const uint32_t d_pair = (uint32_t)bits(machInst, 4, 1);
+             const uint32_t n_reg  = (uint32_t)bits(machInst, 9, 5);
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_pair & 0xF);       
+             imm |= (uint64_t)((n_reg & 0x1F) << 4); 
+
+             return new SmeBf1cvtl(machInst, imm);
+        }
+
+        // BF2CVTL (FP8 -> BF16 Bottom)
+        if (Aarch64::isSme2Bf2cvtl((uint32_t)machInst)) {
+             const uint32_t d_pair = (uint32_t)bits(machInst, 4, 1);
+             const uint32_t n_reg  = (uint32_t)bits(machInst, 9, 5);
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_pair & 0xF);       
+             imm |= (uint64_t)((n_reg & 0x1F) << 4); 
+
+             return new SmeBf2cvtl(machInst, imm);
+        }
+        
         
         // 1. Detect 4-register variant (Bits 21 and 20 pattern)
         //    SCVTF/UCVTF 4-reg: 0xC132...
