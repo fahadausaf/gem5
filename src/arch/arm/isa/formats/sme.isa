@@ -116,6 +116,8 @@ namespace Aarch64
     static inline bool isSme2Bf2cvtl(uint32_t insn);
     static inline bool isSme2Bf1cvt(uint32_t insn);
     static inline bool isSme2Bf2cvt(uint32_t insn);
+    static inline bool isSme2F1cvt(uint32_t insn);
+    static inline bool isSme2F2cvt(uint32_t insn);
 
     static inline bool isFmop4a(uint32_t insn);
     static inline bool isBfmop4a(uint32_t insn);
@@ -268,7 +270,8 @@ namespace Aarch64
             Aarch64::isSme2Fcvtl(insn) ||
             Aarch64::isSme2F1cvtl(insn) || Aarch64::isSme2F2cvtl(insn) ||
             Aarch64::isSme2Bf1cvtl(insn) || Aarch64::isSme2Bf2cvtl(insn) ||
-            Aarch64::isSme2Bf1cvt(insn) || Aarch64::isSme2Bf2cvt(insn)) {   
+            Aarch64::isSme2Bf1cvt(insn) || Aarch64::isSme2Bf2cvt(insn) ||
+            Aarch64::isSme2F1cvt(insn) || Aarch64::isSme2F2cvt(insn)) {   
             
             return Aarch64::decodeSmeCvt(machInst);
         }
@@ -788,6 +791,22 @@ namespace Aarch64
     isSme2Bf2cvt(uint32_t insn)
     {
         return (insn & 0xfffffc01u) == 0xC1E6E000u;
+    }
+
+    // F1CVT (FP8 to FP16, Format 1)
+    // Base: 0xC126E000
+    static inline bool
+    isSme2F1cvt(uint32_t insn)
+    {
+        return (insn & 0xfffffc01u) == 0xC126E000u;
+    }
+
+    // F2CVT (FP8 to FP16, Format 2)
+    // Base: 0xC1A6E000
+    static inline bool
+    isSme2F2cvt(uint32_t insn)
+    {
+        return (insn & 0xfffffc01u) == 0xC1A6E000u;
     }
 
     StaticInstPtr
@@ -1627,6 +1646,28 @@ namespace Aarch64
              imm |= (uint64_t)((n_reg & 0x1F) << 4); 
 
              return new SmeBf2cvt(machInst, imm);
+        }
+
+        if (Aarch64::isSme2F1cvt((uint32_t)machInst)) {
+             const uint32_t d_pair = (uint32_t)bits(machInst, 4, 1);
+             const uint32_t n_reg  = (uint32_t)bits(machInst, 9, 5);
+             
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_pair & 0xF);       
+             imm |= (uint64_t)((n_reg & 0x1F) << 4); 
+
+             return new SmeF1cvt(machInst, imm);
+        }
+
+        if (Aarch64::isSme2F2cvt((uint32_t)machInst)) {
+             const uint32_t d_pair = (uint32_t)bits(machInst, 4, 1);
+             const uint32_t n_reg  = (uint32_t)bits(machInst, 9, 5);
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(d_pair & 0xF);       
+             imm |= (uint64_t)((n_reg & 0x1F) << 4); 
+
+             return new SmeF2cvt(machInst, imm);
         }
         
         
