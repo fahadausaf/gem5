@@ -2702,6 +2702,68 @@ let {{
     smeCvtMvInst("bf1cvtl", "Bf1cvtl", "SimdFloatCvtOp", bfcvtlFp8Code)
     smeCvtMvInst("bf2cvtl", "Bf2cvtl", "SimdFloatCvtOp", bfcvtlFp8Code)
 
+    # BF1CVT / BF2CVT (FP8 -> BFloat16)
+    # Instruction: BF1CVT { <Zd1>.H, <Zd2>.H }, <Zn>.B
+    # Behavior: Reads all bytes from Zn. Converts sequentially.
+    #           First half of bytes -> Zd1. Second half -> Zd2.
+    
+    bfcvtFp8Code = r'''
+        FPSCR fpscr = (FPSCR)Fpscr;
+        
+        const uint32_t raw     = (uint32_t)imm;
+        const uint32_t d_group = (raw >> 0) & 0xF;   // Zd pair index
+        const uint32_t n_idx   = (raw >> 4) & 0x1F;  // Zn index
+
+        const uint32_t zd1_idx = d_group * 2;
+        const uint32_t zd2_idx = zd1_idx + 1;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        // Zn contains VL_bytes elements (8-bit).
+        // Zd1 can hold (VL_bytes / 2) 16-bit elements.
+        // Zd2 can hold (VL_bytes / 2) 16-bit elements.
+        // So Zn fills both Zd1 and Zd2 exactly.
+        const uint32_t elements = VL_bytes; 
+        const uint32_t half_elements = elements / 2;
+
+        ArmISA::VecRegContainer zn, zd1, zd2;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[n_idx], &zn);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd1_idx], &zd1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zd2_idx], &zd2);
+
+        const uint8_t *in = zn.as<uint8_t>();
+        uint16_t *out1 = (uint16_t*)zd1.as<uint8_t>();
+        uint16_t *out2 = (uint16_t*)zd2.as<uint8_t>();
+
+        // FP8 -> BFloat16 Stub (Same as before)
+        auto fp8_to_bf16 = [](uint8_t b) -> uint16_t {
+            if (b == 0) return 0;
+            uint16_t sign = (b & 0x80) << 8;
+            uint16_t exp  = (b & 0x7C) << 8; 
+            uint16_t mant = (b & 0x03) << 5; 
+            return sign | exp | mant;
+        };
+
+        for (uint32_t e = 0; e < elements; ++e) {
+            uint16_t res = fp8_to_bf16(in[e]);
+            
+            if (e < half_elements) {
+                // First half goes to Zd1
+                out1[e] = res;
+            } else {
+                // Second half goes to Zd2
+                out2[e - half_elements] = res;
+            }
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd1_idx], &zd1);
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd2_idx], &zd2);
+    '''
+
+    # Register Instructions
+    smeCvtMvInst("bf1cvt", "Bf1cvt", "SimdFloatCvtOp", bfcvtFp8Code)
+    smeCvtMvInst("bf2cvt", "Bf2cvt", "SimdFloatCvtOp", bfcvtFp8Code)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 
