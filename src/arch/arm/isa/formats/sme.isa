@@ -118,6 +118,9 @@ namespace Aarch64
     static inline bool isSme2Bf2cvt(uint32_t insn);
     static inline bool isSme2F1cvt(uint32_t insn);
     static inline bool isSme2F2cvt(uint32_t insn);
+    static inline bool isSme2Sqcvt(uint32_t insn);
+    static inline bool isSme2Sqcvtu(uint32_t insn);
+    static inline bool isSme2Uqcvt(uint32_t insn);
 
     static inline bool isFmop4a(uint32_t insn);
     static inline bool isBfmop4a(uint32_t insn);
@@ -271,7 +274,9 @@ namespace Aarch64
             Aarch64::isSme2F1cvtl(insn) || Aarch64::isSme2F2cvtl(insn) ||
             Aarch64::isSme2Bf1cvtl(insn) || Aarch64::isSme2Bf2cvtl(insn) ||
             Aarch64::isSme2Bf1cvt(insn) || Aarch64::isSme2Bf2cvt(insn) ||
-            Aarch64::isSme2F1cvt(insn) || Aarch64::isSme2F2cvt(insn)) {   
+            Aarch64::isSme2F1cvt(insn) || Aarch64::isSme2F2cvt(insn) ||
+            Aarch64::isSme2Sqcvt(insn) || Aarch64::isSme2Sqcvtu(insn) ||
+            Aarch64::isSme2Uqcvt(insn)) {   
             
             return Aarch64::decodeSmeCvt(machInst);
         }
@@ -807,6 +812,34 @@ namespace Aarch64
     isSme2F2cvt(uint32_t insn)
     {
         return (insn & 0xfffffc01u) == 0xC1A6E000u;
+    }
+
+    // SQCVT (Four registers)
+    static inline bool
+    isSme2Sqcvt(uint32_t insn)
+    {
+        // Base: 1100 0001 x011 0011 1110 00nn n00d dddd
+        // Hex Base (sz=0): 0xC133E000
+        // Mask: 0xFF7FFC60 (Ignores sz, Zn, Zd)
+        return (insn & 0xff7ffc60u) == 0xc133e000u;
+    }
+
+    // SQCVTU (Four registers, Unsigned Saturation)
+    static inline bool
+    isSme2Sqcvtu(uint32_t insn)
+    {
+        // Base: 1100 0001 x111 0011 ... -> 0xC173E000
+        // Mask: 0xFF7FFC60
+        return (insn & 0xff7ffc60u) == 0xc173e000u;
+    }
+
+    // UQCVT (Four registers, Unsigned Input -> Unsigned Output)
+    // Base: 1100 0001 x011 0011 ... 0010 0000
+    // Hex: 0xC133E020
+    static inline bool
+    isSme2Uqcvt(uint32_t insn)
+    {
+        return (insn & 0xff7ffc60u) == 0xc133e020u;
     }
 
     StaticInstPtr
@@ -1668,6 +1701,56 @@ namespace Aarch64
              imm |= (uint64_t)((n_reg & 0x1F) << 4); 
 
              return new SmeF2cvt(machInst, imm);
+        }
+
+        // SQCVT (Four registers)
+        if (Aarch64::isSme2Sqcvt((uint32_t)machInst)) {
+             const uint32_t sz = (uint32_t)bits(machInst, 23);
+             const uint32_t zn_field = (uint32_t)bits(machInst, 9, 7);
+             const uint32_t zd = (uint32_t)bits(machInst, 4, 0);
+
+             // Zn denotes a group of 4 registers (Zn*4)
+             const uint32_t n_start = zn_field * 4;
+
+             uint64_t imm = 0;
+             // Pack args: [4:0]=Zd, [9:5]=Zn_start, [10]=sz
+             imm |= (uint64_t)(zd & 0x1F);
+             imm |= (uint64_t)((n_start & 0x1F) << 5); 
+             imm |= (uint64_t)((sz & 0x1) << 10);
+
+             return new SmeSqcvt(machInst, imm);
+        }
+
+        // SQCVTU (Four registers)
+        if (Aarch64::isSme2Sqcvtu((uint32_t)machInst)) {
+             const uint32_t sz = (uint32_t)bits(machInst, 23);
+             const uint32_t zn_field = (uint32_t)bits(machInst, 9, 7);
+             const uint32_t zd = (uint32_t)bits(machInst, 4, 0);
+
+             const uint32_t n_start = zn_field * 4;
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(zd & 0x1F);
+             imm |= (uint64_t)((n_start & 0x1F) << 5); 
+             imm |= (uint64_t)((sz & 0x1) << 10);
+
+             return new SmeSqcvtu(machInst, imm);
+        }
+
+        // UQCVT (Four registers)
+        if (Aarch64::isSme2Uqcvt((uint32_t)machInst)) {
+             const uint32_t sz = (uint32_t)bits(machInst, 23);
+             const uint32_t zn_field = (uint32_t)bits(machInst, 9, 7);
+             const uint32_t zd = (uint32_t)bits(machInst, 4, 0);
+
+             const uint32_t n_start = zn_field * 4;
+
+             uint64_t imm = 0;
+             imm |= (uint64_t)(zd & 0x1F);
+             imm |= (uint64_t)((n_start & 0x1F) << 5); 
+             imm |= (uint64_t)((sz & 0x1) << 10);
+
+             return new SmeUqcvt(machInst, imm);
         }
         
         
