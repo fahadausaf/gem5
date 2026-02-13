@@ -2708,7 +2708,6 @@ let {{
     #           First half of bytes -> Zd1. Second half -> Zd2.
     
     bfcvtFp8Code = r'''
-        FPSCR fpscr = (FPSCR)Fpscr;
         
         const uint32_t raw     = (uint32_t)imm;
         const uint32_t d_group = (raw >> 0) & 0xF;   // Zd pair index
@@ -2770,7 +2769,6 @@ let {{
     #           First half of bytes -> Zd1. Second half -> Zd2.
     
     fcvtFp8Code = r'''
-        FPSCR fpscr = (FPSCR)Fpscr;
         
         const uint32_t raw     = (uint32_t)imm;
         const uint32_t d_group = (raw >> 0) & 0xF;   // Zd pair index
@@ -3047,6 +3045,141 @@ let {{
     '''
 
     smeCvtMvInst("uqcvt", "Uqcvt", "SimdFloatCvtOp", uqcvtCode)
+
+    # SQCVT (Two registers)
+    # Instruction: SQCVT <Zd>.H, { <Zn1>.S-<Zn2>.S }
+    # Behavior: Narrowing Signed 32-bit -> Signed 16-bit.
+    # Input: 2 Vectors (32-bit elements). Output: 1 Vector (16-bit elements).
+
+    sqcvt2Code = r'''
+        
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F;
+        const uint32_t n_start = (raw >> 5) & 0x1F;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        ArmISA::VecRegContainer zd;
+        ArmISA::VecRegContainer zns[2];
+        
+        for (int i = 0; i < 2; ++i) {
+            xc->tcBase()->getReg(ArmISA::vecRegClass[n_start + i], &zns[i]);
+        }
+
+        // Helper for Signed Saturation (32 -> 16)
+        auto saturate_s32_s16 = [](int32_t val) -> int16_t {
+            const int32_t min_val = -32768;
+            const int32_t max_val = 32767;
+            if (val < min_val) return (int16_t)min_val;
+            if (val > max_val) return (int16_t)max_val;
+            return (int16_t)val;
+        };
+
+        uint16_t *out = (uint16_t*)zd.as<uint8_t>();
+        int dest_idx = 0;
+
+        for (int i = 0; i < 2; ++i) {
+            const int32_t *src = (const int32_t*)zns[i].as<uint8_t>();
+            // VL_bytes / 4 bytes per element = number of 32-bit elements
+            int elements_per_vec = VL_bytes / 4;
+
+            for (int e = 0; e < elements_per_vec; ++e) {
+                out[dest_idx++] = saturate_s32_s16(src[e]);
+            }
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    smeCvtMvInst("sqcvt2", "Sqcvt2", "SimdFloatCvtOp", sqcvt2Code)
+
+    # UQCVT (Two registers)
+    # Instruction: UQCVT <Zd>.H, { <Zn1>.S-<Zn2>.S }
+    # Behavior: Narrowing Unsigned 32-bit -> Unsigned 16-bit.
+    
+    uqcvt2Code = r'''
+        
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F;
+        const uint32_t n_start = (raw >> 5) & 0x1F;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        ArmISA::VecRegContainer zd;
+        ArmISA::VecRegContainer zns[2];
+        
+        for (int i = 0; i < 2; ++i) {
+            xc->tcBase()->getReg(ArmISA::vecRegClass[n_start + i], &zns[i]);
+        }
+
+        // Helper for Unsigned Saturation (32 -> 16)
+        auto saturate_u32_u16 = [](uint32_t val) -> uint16_t {
+            const uint32_t max_val = 65535;
+            if (val > max_val) return (uint16_t)max_val;
+            return (uint16_t)val;
+        };
+
+        uint16_t *out = (uint16_t*)zd.as<uint8_t>();
+        int dest_idx = 0;
+
+        for (int i = 0; i < 2; ++i) {
+            // Read as Unsigned 32-bit
+            const uint32_t *src = (const uint32_t*)zns[i].as<uint8_t>();
+            int elements_per_vec = VL_bytes / 4;
+
+            for (int e = 0; e < elements_per_vec; ++e) {
+                out[dest_idx++] = saturate_u32_u16(src[e]);
+            }
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    smeCvtMvInst("uqcvt2", "Uqcvt2", "SimdFloatCvtOp", uqcvt2Code)
+
+    # SQCVTU (Two registers)
+    # Instruction: SQCVTU <Zd>.H, { <Zn1>.S-<Zn2>.S }
+    # Behavior: Narrowing Signed 32-bit -> Unsigned 16-bit.
+    
+    sqcvtu2Code = r'''
+        
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F;
+        const uint32_t n_start = (raw >> 5) & 0x1F;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        ArmISA::VecRegContainer zd;
+        ArmISA::VecRegContainer zns[2];
+        
+        for (int i = 0; i < 2; ++i) {
+            xc->tcBase()->getReg(ArmISA::vecRegClass[n_start + i], &zns[i]);
+        }
+
+        // Helper: Signed 32 -> Unsigned 16 Saturation
+        auto saturate_s32_u16 = [](int32_t val) -> uint16_t {
+            if (val < 0) return 0;
+            if (val > 65535) return 65535;
+            return (uint16_t)val;
+        };
+
+        uint16_t *out = (uint16_t*)zd.as<uint8_t>();
+        int dest_idx = 0;
+
+        for (int i = 0; i < 2; ++i) {
+            // Read as Signed 32-bit
+            const int32_t *src = (const int32_t*)zns[i].as<uint8_t>();
+            int elements_per_vec = VL_bytes / 4;
+
+            for (int e = 0; e < elements_per_vec; ++e) {
+                out[dest_idx++] = saturate_s32_u16(src[e]);
+            }
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    smeCvtMvInst("sqcvtu2", "Sqcvtu2", "SimdFloatCvtOp", sqcvtu2Code)
 
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
