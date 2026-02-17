@@ -3181,6 +3181,211 @@ let {{
 
     smeCvtMvInst("sqcvtu2", "Sqcvtu2", "SimdFloatCvtOp", sqcvtu2Code)
 
+    # SQCVTN (Four registers)
+    # Instruction: SQCVTN <Zd>.<T>, { <Zn1>.<Tb>-<Zn4>.<Tb> }
+    # Behavior: Narrowing Signed Saturation with Interleaving.
+    # sz=0: 32-bit (S) -> 8-bit (B).
+    # sz=1: 64-bit (D) -> 16-bit (H).
+
+    sqcvtnCode = r'''
+        
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F;
+        const uint32_t n_start = (raw >> 5) & 0x1F;
+        const uint32_t sz = (raw >> 10) & 0x1;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        ArmISA::VecRegContainer zd;
+        ArmISA::VecRegContainer zns[4];
+        
+        for (int i = 0; i < 4; ++i) {
+            xc->tcBase()->getReg(ArmISA::vecRegClass[n_start + i], &zns[i]);
+        }
+
+        auto saturate = [](int64_t val, int64_t min_val, int64_t max_val) -> int64_t {
+            if (val < min_val) return min_val;
+            if (val > max_val) return max_val;
+            return val;
+        };
+
+        if (sz == 0) {
+            // Case: 32-bit (S) -> 8-bit (B)
+            // Destination: int8. Source: int32.
+            
+            uint8_t *out = zd.as<uint8_t>();
+            
+            // Number of source elements to process per vector = VL_bytes / 4 (size of int32)
+            // Since we interleave 4 vectors, the total output elements = 4 * (VL/4) = VL.
+            // This fills the destination register exactly.
+            int src_elements = VL_bytes / 4; 
+            
+            const int64_t min_val = -128;
+            const int64_t max_val = 127;
+
+            for (int e = 0; e < src_elements; ++e) {
+                for (int i = 0; i < 4; ++i) {
+                    const int32_t *src = (const int32_t*)zns[i].as<uint8_t>();
+                    int64_t src_val = (int64_t)src[e];
+                    
+                    // Interleaved Write: 4*e + i
+                    out[4 * e + i] = (uint8_t)saturate(src_val, min_val, max_val);
+                }
+            }
+        } else {
+            // Case: 64-bit (D) -> 16-bit (H)
+            
+            uint16_t *out = (uint16_t*)zd.as<uint8_t>();
+            
+            // Number of source elements per vector = VL_bytes / 8 (size of int64)
+            int src_elements = VL_bytes / 8;
+            
+            const int64_t min_val = -32768;
+            const int64_t max_val = 32767;
+
+            for (int e = 0; e < src_elements; ++e) {
+                for (int i = 0; i < 4; ++i) {
+                    const int64_t *src = (const int64_t*)zns[i].as<uint8_t>();
+                    int64_t src_val = src[e];
+                    
+                    // Interleaved Write: 4*e + i
+                    out[4 * e + i] = (uint16_t)saturate(src_val, min_val, max_val);
+                }
+            }
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    smeCvtMvInst("sqcvtn", "Sqcvtn", "SimdFloatCvtOp", sqcvtnCode)
+
+    # SQCVTUN (Four registers)
+    # Instruction: SQCVTUN <Zd>.<T>, { <Zn1>.<Tb>-<Zn4>.<Tb> }
+    # Behavior: Narrowing Signed -> Unsigned Saturation with Interleaving.
+    
+    sqcvtunCode = r'''
+        
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F;
+        const uint32_t n_start = (raw >> 5) & 0x1F;
+        const uint32_t sz = (raw >> 10) & 0x1;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        ArmISA::VecRegContainer zd;
+        ArmISA::VecRegContainer zns[4];
+        
+        for (int i = 0; i < 4; ++i) {
+            xc->tcBase()->getReg(ArmISA::vecRegClass[n_start + i], &zns[i]);
+        }
+
+        // Helper: Signed Input -> Unsigned Output Saturation
+        auto saturate_s_u = [](int64_t val, uint64_t max_u_val) -> uint64_t {
+            if (val < 0) return 0;
+            if ((uint64_t)val > max_u_val) return max_u_val;
+            return (uint64_t)val;
+        };
+
+        if (sz == 0) {
+            // Case: 32-bit Signed -> 8-bit Unsigned
+            uint8_t *out = zd.as<uint8_t>();
+            int src_elements = VL_bytes / 4; 
+            const uint64_t max_val = 255;
+
+            for (int e = 0; e < src_elements; ++e) {
+                for (int i = 0; i < 4; ++i) {
+                    const int32_t *src = (const int32_t*)zns[i].as<uint8_t>();
+                    int64_t src_val = (int64_t)src[e];
+                    
+                    // Interleaved Write: 4*e + i
+                    out[4 * e + i] = (uint8_t)saturate_s_u(src_val, max_val);
+                }
+            }
+        } else {
+            // Case: 64-bit Signed -> 16-bit Unsigned
+            uint16_t *out = (uint16_t*)zd.as<uint8_t>();
+            int src_elements = VL_bytes / 8;
+            const uint64_t max_val = 65535;
+
+            for (int e = 0; e < src_elements; ++e) {
+                for (int i = 0; i < 4; ++i) {
+                    const int64_t *src = (const int64_t*)zns[i].as<uint8_t>();
+                    int64_t src_val = src[e];
+                    
+                    // Interleaved Write: 4*e + i
+                    out[4 * e + i] = (uint16_t)saturate_s_u(src_val, max_val);
+                }
+            }
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    smeCvtMvInst("sqcvtun", "Sqcvtun", "SimdFloatCvtOp", sqcvtunCode)
+
+    # UQCVTN (Four registers)
+    # Instruction: UQCVTN <Zd>.<T>, { <Zn1>.<Tb>-<Zn4>.<Tb> }
+    # Behavior: Narrowing Unsigned -> Unsigned Saturation with Interleaving.
+    
+    uqcvtnCode = r'''
+        
+        const uint32_t raw = (uint32_t)imm;
+        const uint32_t zd_idx = (raw >> 0) & 0x1F;
+        const uint32_t n_start = (raw >> 5) & 0x1F;
+        const uint32_t sz = (raw >> 10) & 0x1;
+
+        const uint32_t VL_bytes = ArmStaticInst::getCurSveVecLen<uint8_t>(xc->tcBase());
+        
+        ArmISA::VecRegContainer zd;
+        ArmISA::VecRegContainer zns[4];
+        
+        for (int i = 0; i < 4; ++i) {
+            xc->tcBase()->getReg(ArmISA::vecRegClass[n_start + i], &zns[i]);
+        }
+
+        // Helper: Unsigned -> Unsigned Saturation
+        auto saturate_u_u = [](uint64_t val, uint64_t max_val) -> uint64_t {
+            if (val > max_val) return max_val;
+            return val;
+        };
+
+        if (sz == 0) {
+            // Case: 32-bit Unsigned -> 8-bit Unsigned
+            uint8_t *out = zd.as<uint8_t>();
+            int src_elements = VL_bytes / 4; 
+            const uint64_t max_val = 255;
+
+            for (int e = 0; e < src_elements; ++e) {
+                for (int i = 0; i < 4; ++i) {
+                    const uint32_t *src = (const uint32_t*)zns[i].as<uint8_t>();
+                    uint64_t src_val = (uint64_t)src[e];
+                    
+                    // Interleaved Write: 4*e + i
+                    out[4 * e + i] = (uint8_t)saturate_u_u(src_val, max_val);
+                }
+            }
+        } else {
+            // Case: 64-bit Unsigned -> 16-bit Unsigned
+            uint16_t *out = (uint16_t*)zd.as<uint8_t>();
+            int src_elements = VL_bytes / 8;
+            const uint64_t max_val = 65535;
+
+            for (int e = 0; e < src_elements; ++e) {
+                for (int i = 0; i < 4; ++i) {
+                    const uint64_t *src = (const uint64_t*)zns[i].as<uint8_t>();
+                    uint64_t src_val = src[e];
+                    
+                    // Interleaved Write: 4*e + i
+                    out[4 * e + i] = (uint16_t)saturate_u_u(src_val, max_val);
+                }
+            }
+        }
+
+        xc->tcBase()->setReg(ArmISA::vecRegClass[zd_idx], &zd);
+    '''
+
+    smeCvtMvInst("uqcvtn", "Uqcvtn", "SimdFloatCvtOp", uqcvtnCode)
+
     # RDSVL
     smeRdsvlInst('rdsvl', 'Rdsvl', 'SimdAddOp')
 
