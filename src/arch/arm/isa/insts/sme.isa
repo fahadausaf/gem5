@@ -2409,9 +2409,6 @@ let {{
     # Behavior: Converts two FP32 vectors to one interleaved BFloat16 vector.
     
     bfcvtFp32Bf16Code = r'''
-        FPSCR fpscr = (FPSCR)Fpscr;
-        // We use FPCR to control rounding if strictly required, 
-        // but BF16 usually implies specific rounding (RNE).
         
         const uint32_t raw    = (uint32_t)imm;
         const uint32_t zd_idx = (raw >> 0) & 0x1F; 
@@ -2474,7 +2471,7 @@ let {{
     
     # BFCVTN (Narrowing, FP32 to BFloat16)
     bfcvtnCode = r'''
-        FPSCR fpscr = (FPSCR)Fpscr;
+        
         // BFloat16 usually implies Round-to-Nearest-Even on the 16th bit
 
         // Immediate Unpacking
@@ -2584,7 +2581,6 @@ let {{
     #           "Bottom" variant selects even-numbered bytes (0, 2, 4...).
     
     fcvtlFp8Code = r'''
-        FPSCR fpscr = (FPSCR)Fpscr;
         // In a full model, we would read FPMR here to check F1 vs F2 format bits.
         
         const uint32_t raw     = (uint32_t)imm;
@@ -2646,7 +2642,6 @@ let {{
     # Behavior: Widens FP8 to BFloat16 (de-interleaved).
     
     bfcvtlFp8Code = r'''
-        FPSCR fpscr = (FPSCR)Fpscr;
         // Logic requires FPMR to determine FP8 format (E5M2 vs E4M3).
         
         const uint32_t raw     = (uint32_t)imm;
