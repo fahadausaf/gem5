@@ -133,6 +133,8 @@ namespace Aarch64
     static inline bool isBfmop4aWidening(uint32_t insn);
     static inline bool isBfmop4sWidening(uint32_t insn);
     static inline bool isBfmop4s(uint32_t insn);
+    static inline bool isBftmopa(uint32_t insn);
+    static inline bool isBftmopaWidening(uint32_t insn);
     
 
 
@@ -291,6 +293,50 @@ namespace Aarch64
             const uint64_t imm_packed = (da & 0x1) | ((nreg & 0x3) << 2) | ((mreg & 0x3) << 4);
 
             return new SmeBfmop4s<uint16_t, uint32_t>(machInst, imm_packed, n_base, m_base);
+        }
+
+        // Check for BFTMOPA (Non-widening, Sparse)
+        if (Aarch64::isBftmopa(insn)) {
+            const RegIndex Zm  = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+            const uint32_t Zn4 = bits(machInst, 9, 6);
+            const uint32_t K   = bits(machInst, 12, 12);
+            const uint32_t Zk2 = bits(machInst, 11, 10);
+            const uint32_t i2  = bits(machInst, 5, 4);
+            const uint32_t da  = bits(machInst, 0, 0);
+
+            // Zn is encoded as "Zn field * 2"
+            const RegIndex Zn_base = (RegIndex)(Zn4 << 1);
+            
+            // Zk logic: '1':K:'1':Zk 
+            // If K=0: 101xx -> 20 + Zk2 (Z20-Z23)
+            // If K=1: 111xx -> 28 + Zk2 (Z28-Z31)
+            const RegIndex Zk = (RegIndex)(20 + (K << 3) + Zk2);
+
+            // Pack ZAda, index (i2), and Zk into the immediate for execution
+            // [0]: da, [2:1]: index, [7:3]: Zk
+            const uint64_t imm_packed = (da & 0x1) | ((i2 & 0x3) << 1) | ((Zk & 0x1f) << 3);
+
+            return new SmeBftmopa<uint16_t, uint16_t>(machInst, imm_packed, Zn_base, Zm);
+        }
+
+        // Check for BFTMOPA (Widening, Sparse, BFloat16 to FP32)
+        if (Aarch64::isBftmopaWidening(insn)) {
+            const RegIndex Zm  = (RegIndex)(uint32_t)bits(machInst, 20, 16);
+            const uint32_t Zn4 = bits(machInst, 9, 6);
+            const uint32_t K   = bits(machInst, 12, 12);
+            const uint32_t Zk2 = bits(machInst, 11, 10);
+            const uint32_t i2  = bits(machInst, 5, 4);
+            const uint32_t da  = bits(machInst, 1, 0); // 2 bits
+
+            const RegIndex Zn_base = (RegIndex)(Zn4 << 1);
+            const RegIndex Zk = (RegIndex)(20 + (K << 3) + Zk2);
+
+            // Pack da, i2, and zk into the immediate payload
+            // [1:0] da, [3:2] i2, [8:4] zk
+            const uint64_t imm_packed = (da & 0x3) | ((i2 & 0x3) << 2) | ((Zk & 0x1f) << 4);
+
+            // Inputs are BF16 (uint16_t), Output is FP32 (uint32_t)
+            return new SmeBftmopaWidening<uint16_t, uint32_t>(machInst, imm_packed, Zn_base, Zm);
         }
 
         // ------------------------------------------------------------
@@ -672,7 +718,41 @@ namespace Aarch64
         return (insn & ~operand_mask) == base_encoding;
     }
 
+    // BFTMOPA (Non-widening, Sparse) Matcher
+    static inline bool
+    isBftmopa(uint32_t insn)
+    {
+        constexpr uint32_t operand_mask =
+            (0x1fu << 16) | // Zm  (5 bits)
+            (0x1u  << 12) | // K   (1 bit)
+            (0x3u  << 10) | // Zk  (2 bits)
+            (0xfu  << 6)  | // Zn  (4 bits)
+            (0x3u  << 4)  | // i2  (2 bits)
+            (0x1u  << 0);   // ZAda(1 bit)
 
+        // Base encoding: 1000 0001 0110 0000 0000 0000 0000 1000
+        constexpr uint32_t base_encoding = 0x81600008u;
+
+        return (insn & ~operand_mask) == base_encoding;
+    }
+
+    // BFTMOPA (Widening, Sparse) Matcher
+    static inline bool
+    isBftmopaWidening(uint32_t insn)
+    {
+        constexpr uint32_t operand_mask =
+            (0x1fu << 16) | // Zm
+            (0x1u  << 12) | // K
+            (0x3u  << 10) | // Zk
+            (0xfu  << 6)  | // Zn
+            (0x3u  << 4)  | // i2
+            (0x3u  << 0);   // ZAda (2 bits for FP32 tile)
+
+        // Base encoding: 1000 0001 0100 0000 0000 0000 0000 0000
+        constexpr uint32_t base_encoding = 0x81400000u;
+
+        return (insn & ~operand_mask) == base_encoding;
+    }
 
     static inline bool
     isMova2B(uint32_t insn)

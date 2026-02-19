@@ -3555,6 +3555,184 @@ let {{
     # TPSElem (Source) = uint16_t (representing BF16), TPDElem (Dest) = uint32_t (FP32)
     smeFmop4aInst('bfmop4s', 'Bfmop4s', 'MatrixOPOp', ['uint16_t, uint32_t'], bfmop4sCode)
 
+    # BFTMOPA (Non-widening / Sparse / BFloat16) Implementation
+    # Operation: ZA[r][c] += Select(Zn_pair, Control) * Zm[c]
+    bftmopaCode = r'''
+        // Unpack immediate: [0] da, [2:1] index, [7:3] zk
+        const uint8_t da    = imm & 0x1;
+        const uint8_t index = (imm >> 1) & 0x3;
+        const uint8_t zk    = (imm >> 3) & 0x1F;
+
+        auto tile = getTile<TPDElem>(ZA, da);
+        FPSCR fpscr = (FPSCR) Fpscr;
+
+        // BFloat16 <-> FP32 conversion
+        auto bf16_to_fp32 = [](uint16_t b) -> uint32_t {
+            return static_cast<uint32_t>(b) << 16;
+        };
+        auto fp32_to_bf16 = [](uint32_t f) -> uint16_t {
+            // Round to nearest even
+            uint32_t lsb = (f >> 16) & 1;
+            f += 0x7FFF + lsb;
+            return static_cast<uint16_t>(f >> 16);
+        };
+
+        const int dim = eCount;
+
+        // 1. Read Control Vector (Zk)
+        ArmISA::VecRegContainer z_ctrl;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zk], &z_ctrl);
+        const uint8_t* ctrl_ptr = z_ctrl.as<uint8_t>();
+
+        // Control bit accessor
+        // The control segment is (2 * dim) bits long.
+        // We select the segment using 'index'.
+        auto get_ctrl_bit = [&](int bit_idx) -> bool {
+            int total_bit_offset = (index * dim * 2) + bit_idx;
+            return (ctrl_ptr[total_bit_offset / 8] >> (total_bit_offset % 8)) & 1;
+        };
+
+        // 2. Read Source Vectors
+        ArmISA::VecRegContainer zn0, zn1, zm;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op1], &zn0);      // Zn
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op1 + 1], &zn1);  // Zn+1
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op2], &zm);       // Zm
+
+        const uint16_t* zn0_ptr = zn0.as<uint16_t>();
+        const uint16_t* zn1_ptr = zn1.as<uint16_t>();
+        const uint16_t* zm_ptr  = zm.as<uint16_t>();
+
+        // 3. Sparse Outer Product Loop
+        for (int row = 0; row < dim; ++row) {
+            for (int col = 0; col < dim; ++col) {
+                
+                uint16_t elem1_bf16 = 0; // Default to 0.0
+                
+                // Sparsity Logic (1-in-2 selection):
+                // For a given column (col) and row input pair (r=0, r=1):
+                // We check 2 control bits per column.
+                // Spec: "If both bits... are 1, only the element corresponding to the LSB is selected."
+                // This implies priority: if bit 0 is set, take Zn. Else if bit 1 is set, take Zn+1.
+                
+                bool bit0 = get_ctrl_bit(2 * col + 0);
+                bool bit1 = get_ctrl_bit(2 * col + 1);
+
+                if (bit0) {
+                    elem1_bf16 = zn0_ptr[row];
+                } else if (bit1) {
+                    elem1_bf16 = zn1_ptr[row];
+                } 
+                // else both 0 -> elem1 remains 0 (discarded)
+
+                uint16_t elem2_bf16 = zm_ptr[col];
+                uint16_t sum_bf16   = tile[row][col];
+
+                // Convert to FP32 for calculation
+                uint32_t e1  = bf16_to_fp32(elem1_bf16);
+                uint32_t e2  = bf16_to_fp32(elem2_bf16);
+                uint32_t sum = bf16_to_fp32(sum_bf16);
+
+                // Multiply-Accumulate
+                uint32_t prod = fplibMul(e1, e2, fpscr);
+                uint32_t res  = fplibAdd(sum, prod, fpscr);
+
+                // Store back as BFloat16
+                tile[row][col] = fp32_to_bf16(res);
+            }
+        }
+        DPRINTF(Arm, "Successfully executed BFTMOPA: da=%u, index=%u, zk=%u\\n", 
+                da, index, zk);
+    '''
+
+    smeFmop4aInst('bftmopa', 'Bftmopa', 'MatrixOPOp', ['uint16_t, uint16_t'], bftmopaCode)
+
+    # BFTMOPA (Widening / Sparse / BFloat16 -> FP32) Implementation
+    bftmopaWideningCode = r'''
+        // Unpack immediate
+        const uint8_t da    = imm & 0x3;
+        const uint8_t index = (imm >> 2) & 0x3;
+        const uint8_t zk    = (imm >> 4) & 0x1F;
+
+        // Tile elements are FP32 (uint32_t)
+        auto tile = getTile<TPDElem>(ZA, da);
+        FPSCR fpscr = (FPSCR) Fpscr;
+
+        auto bf16_to_fp32 = [](uint16_t b) -> uint32_t {
+            return static_cast<uint32_t>(b) << 16;
+        };
+
+        const int dim = eCount;
+
+        // 1. Read Control Vector
+        ArmISA::VecRegContainer z_ctrl;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zk], &z_ctrl);
+        const uint8_t* ctrl_ptr = z_ctrl.as<uint8_t>();
+
+        // 4 control bits per column for this widening instruction
+        auto get_ctrl_bit = [&](int bit_idx) -> bool {
+            int total_bit_offset = (index * dim * 4) + bit_idx;
+            return (ctrl_ptr[total_bit_offset / 8] >> (total_bit_offset % 8)) & 1;
+        };
+
+        // 2. Read Source Vectors
+        ArmISA::VecRegContainer zn0, zn1, zm;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op1], &zn0);      // Zn
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op1 + 1], &zn1);  // Zn+1
+        xc->tcBase()->getReg(ArmISA::vecRegClass[op2], &zm);       // Zm
+
+        const uint16_t* zn0_ptr = zn0.as<uint16_t>();
+        const uint16_t* zn1_ptr = zn1.as<uint16_t>();
+        const uint16_t* zm_ptr  = zm.as<uint16_t>();
+
+        // 3. Perform 2-in-4 Sparse Sum of Outer Products
+        for (int row = 0; row < dim; ++row) {
+            for (int col = 0; col < dim; ++col) {
+                
+                uint16_t erow[2] = {0, 0}; // Default BFZero
+                int i = 0;
+                
+                // Sparsity Logic: Select 2-in-4 elements
+                // Iterates over Zn0 and Zn1 (r), and elements 0 and 1 (e)
+                for (int r = 0; r < 2; ++r) {
+                    const uint16_t* op1_ptr = (r == 0) ? zn0_ptr : zn1_ptr;
+                    for (int e = 0; e < 2; ++e) {
+                        int ctrl_bit_idx = 4 * col + 2 * r + e;
+                        
+                        // Spec: If >2 bits are 1, only the least 2 significant are taken
+                        if (i < 2 && get_ctrl_bit(ctrl_bit_idx)) {
+                            erow[i] = op1_ptr[2 * row + e];
+                            i++;
+                        }
+                    }
+                }
+
+                uint16_t ecol0 = zm_ptr[2 * col + 0];
+                uint16_t ecol1 = zm_ptr[2 * col + 1];
+
+                uint32_t sum = tile[row][col];
+                
+                // Widen BF16 inputs to FP32
+                uint32_t f_erow0 = bf16_to_fp32(erow[0]);
+                uint32_t f_erow1 = bf16_to_fp32(erow[1]);
+                uint32_t f_ecol0 = bf16_to_fp32(ecol0);
+                uint32_t f_ecol1 = bf16_to_fp32(ecol1);
+
+                // 2-way Dot Product Accumulation
+                uint32_t prod0 = fplibMul(f_erow0, f_ecol0, fpscr);
+                sum = fplibAdd(sum, prod0, fpscr);
+                
+                uint32_t prod1 = fplibMul(f_erow1, f_ecol1, fpscr);
+                sum = fplibAdd(sum, prod1, fpscr);
+
+                tile[row][col] = sum;
+            }
+        }
+
+        DPRINTF(Arm, "Successfully executed BFTMOPA (Widening): da=%u, index=%u, zk=%u\n", da, index, zk);
+    '''
+
+    smeFmop4aInst('bftmopa_widening', 'BftmopaWidening', 'MatrixOPOp', ['uint16_t, uint32_t'], bftmopaWideningCode)
+
     # SMSTART
     smstartSmstopCode = '''
         // Bit 0 of imm determines if we are setting or clearing
