@@ -3490,6 +3490,71 @@ let {{
     smeFmop4aInst('bfmop4s_widening', 'Bfmop4sWidening',
               'MatrixOPOp', ['uint16_t, uint32_t'], bfmop4sWideningCode)
 
+    # BFMOP4S (Non-widening / BFloat16) Implementation
+    # BFMOP4S <ZAda>.S, <Zn>.H, <Zm>.H
+    bfmop4sCode = r'''
+        // imm packing:
+        // [1:0] da, [3:2] nreg, [5:4] mreg
+        const uint8_t da   = imm & 0x3;
+        const uint8_t nreg = (imm >> 2) & 0x3;
+        const uint8_t mreg = (imm >> 4) & 0x3;
+
+        auto tile = getTile<TPDElem>(ZA, da);
+        FPSCR fpscr = (FPSCR) Fpscr;
+
+        auto bf16_to_fp32 = [](uint16_t b) -> uint32_t {
+            return static_cast<uint32_t>(b) << 16;
+        };
+
+        const int dim = eCount; 
+
+        DPRINTF(Arm, "SmeBfmop4s: da=%u nreg=%u mreg=%u eCount=%u op1base=z%u op2base=z%u\n",
+                da, nreg, mreg, eCount, (unsigned)op1, (unsigned)op2);
+
+        // Iterate over the multiple registers based on M and N
+        for (int r = 0; r < nreg; ++r) {
+            for (int c = 0; c < mreg; ++c) {
+                ArmISA::VecRegContainer zn, zm;
+                
+                // op1 and op2 are the base registers. Add offsets r and c.
+                xc->tcBase()->getReg(ArmISA::vecRegClass[op1 + r], &zn);
+                xc->tcBase()->getReg(ArmISA::vecRegClass[op2 + c], &zm);
+
+                const uint16_t *zn_ptr = zn.as<uint16_t>();
+                const uint16_t *zm_ptr = zm.as<uint16_t>();
+
+                for (int j = 0; j < dim; ++j) {
+                    
+                    // Read and negate Zn (BFMOP4S subtraction)
+                    uint32_t n0 = bf16_to_fp32(zn_ptr[2 * j]);
+                    uint32_t n1 = bf16_to_fp32(zn_ptr[2 * j + 1]);
+                    n0 = fplibNeg(n0);
+                    n1 = fplibNeg(n1);
+
+                    for (int i = 0; i < dim; ++i) {
+                        uint32_t m0 = bf16_to_fp32(zm_ptr[2 * i]);
+                        uint32_t m1 = bf16_to_fp32(zm_ptr[2 * i + 1]);
+
+                        TPDElem acc = tile[j][i];
+                        
+                        // 2-way Dot Product Accumulation
+                        TPDElem prod0 = fplibMul(n0, m0, fpscr);
+                        acc = fplibAdd(acc, prod0, fpscr);
+                        
+                        TPDElem prod1 = fplibMul(n1, m1, fpscr);
+                        acc = fplibAdd(acc, prod1, fpscr);
+                        
+                        tile[j][i] = acc;
+                    }
+                }
+            }
+        }
+    '''
+
+    # Instantiate BFMOP4S non-widening:
+    # TPSElem (Source) = uint16_t (representing BF16), TPDElem (Dest) = uint32_t (FP32)
+    smeFmop4aInst('bfmop4s', 'Bfmop4s', 'MatrixOPOp', ['uint16_t, uint32_t'], bfmop4sCode)
+
     # SMSTART
     smstartSmstopCode = '''
         // Bit 0 of imm determines if we are setting or clearing
