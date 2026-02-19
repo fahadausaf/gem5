@@ -3421,6 +3421,75 @@ let {{
                  ['int8_t', 'int16_t'], ['int32_t', 'int64_t'],
                  intMopxCode % "-")
 
+    bfmop4sWideningCode = r'''
+        // imm packing:
+        // [1:0] da, [3:2] nreg, [5:4] mreg
+        const uint8_t da   = imm & 0x3;
+        const uint8_t nreg = (imm >> 2) & 0x3;
+        const uint8_t mreg = (imm >> 4) & 0x3;
+
+        auto tile = getTile<TPDElem>(ZA, da);
+        FPSCR fpscr = (FPSCR) Fpscr;
+
+        // BF16 -> FP32 bits (top 16 bits)
+        auto bf16_to_fp32 = [](uint16_t b) -> uint32_t {
+            return static_cast<uint32_t>(b) << 16;
+        };
+
+        const int dim = eCount / 2;
+
+        DPRINTF(Arm, "SmeBfmop4sWidening: da=%u nreg=%u mreg=%u eCount=%u dim=%d op1base=z%u op2base=z%u\n",
+                da, nreg, mreg, eCount, dim, (unsigned)op1, (unsigned)op2);
+
+        for (int outprod = 0; outprod < 4; ++outprod) {
+            const int row_hv = outprod / 2;
+            const int col_hv = outprod % 2;
+            const int row_base = row_hv * dim;
+            const int col_base = col_hv * dim;
+
+            const RegIndex zn_sel = op1 + (nreg - 1) * col_hv;
+            const RegIndex zm_sel = op2 + (mreg - 1) * row_hv;
+
+            ArmISA::VecRegContainer zn, zm;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zn_sel], &zn);
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zm_sel], &zm);
+
+            const uint16_t *zn_ptr = zn.as<uint16_t>();
+            const uint16_t *zm_ptr = zm.as<uint16_t>();
+
+            for (int row = 0; row < dim; ++row) {
+                for (int col = 0; col < dim; ++col) {
+                    const int row_idx = row_base + row;
+                    const int col_idx = col_base + col;
+
+                    // Read BF16 pairs and convert to FP32
+                    TPDElem erow_0 = bf16_to_fp32(zn_ptr[2 * row_idx + 0]);
+                    TPDElem erow_1 = bf16_to_fp32(zn_ptr[2 * row_idx + 1]);
+                    
+                    // --- BFMOP4S SPECIFIC: Negate erow for subtraction ---
+                    erow_0 = fplibNeg(erow_0);
+                    erow_1 = fplibNeg(erow_1);
+
+                    const uint32_t ecol_0 = bf16_to_fp32(zm_ptr[2 * col_idx + 0]);
+                    const uint32_t ecol_1 = bf16_to_fp32(zm_ptr[2 * col_idx + 1]);
+
+                    TPDElem acc = tile[row_idx][col_idx];
+
+                    TPDElem prod0 = fplibMul(erow_0, ecol_0, fpscr);
+                    acc = fplibAdd(acc, prod0, fpscr);
+
+                    TPDElem prod1 = fplibMul(erow_1, ecol_1, fpscr);
+                    acc = fplibAdd(acc, prod1, fpscr);
+
+                    tile[row_idx][col_idx] = acc;
+                }
+            }
+        }
+    '''
+
+    smeFmop4aInst('bfmop4s_widening', 'Bfmop4sWidening',
+              'MatrixOPOp', ['uint16_t, uint32_t'], bfmop4sWideningCode)
+
     # SMSTART
     smstartSmstopCode = '''
         // Bit 0 of imm determines if we are setting or clearing
