@@ -3485,9 +3485,74 @@ let {{
     smeFmop4aInst('smopa2way', 'Smopa2way', 'MatrixOPOp', ['int16_t, int32_t'], 
                 smop2wayCode.replace('<OP>', '+').replace('<NAME>', 'Smopa'))
 
-    # Generate SMOPS 2-way
+    # SMOPS 2-way
     smeFmop4aInst('smops2way', 'Smops2way', 'MatrixOPOp', ['int16_t, int32_t'], 
                 smop2wayCode.replace('<OP>', '-').replace('<NAME>', 'Smops'))
+
+    smop4Code = r'''
+        const uint8_t da   = imm & 0x3;
+        const uint8_t nreg = ((imm >> 2) & 0x3) + 1;
+        const uint8_t mreg = ((imm >> 4) & 0x3) + 1;
+
+        auto tile = getTile<TPDElem>(ZA, da);
+        
+        // Widening MOP4 algorithm uses half-vectors, so dim = eCount / 2
+        const int dim = eCount / 2;
+
+        DPRINTF(Arm, "Sme<NAME>: da=%u nreg=%u mreg=%u eCount=%u dim=%d op1base=z%u op2base=z%u\n",
+                da, nreg, mreg, eCount, dim, (unsigned)this->op1, (unsigned)this->op2);
+
+        for (int outprod = 0; outprod < 4; ++outprod) {
+            const int row_hv = outprod / 2;
+            const int col_hv = outprod % 2;
+            const int row_base = row_hv * dim;
+            const int col_base = col_hv * dim;
+
+            const RegIndex zn_sel = this->op1 + (nreg - 1) * col_hv;
+            const RegIndex zm_sel = this->op2 + (mreg - 1) * row_hv;
+
+            ArmISA::VecRegContainer zn, zm;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zn_sel], &zn);
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zm_sel], &zm);
+
+            const TPSElem *zn_ptr = zn.as<TPSElem>();
+            const TPSElem *zm_ptr = zm.as<TPSElem>();
+
+            for (int row = 0; row < dim; ++row) {
+                for (int col = 0; col < dim; ++col) {
+                    const int row_idx = row_base + row;
+                    const int col_idx = col_base + col;
+
+                    TPDElem sum = tile[row_idx][col_idx];
+
+                    // 2-Way Signed Dot Product
+                    for (int k = 0; k < 2; ++k) {
+                        TPDElem val1 = static_cast<TPDElem>(zn_ptr[2 * row_idx + k]);
+                        TPDElem val2 = static_cast<TPDElem>(zm_ptr[2 * col_idx + k]);
+                        sum <OP>= (val1 * val2);
+                    }
+
+                    tile[row_idx][col_idx] = sum;
+
+                    if ((row_idx == 0   && col_idx == 0)   ||
+                        (row_idx == 0   && col_idx == dim) ||
+                        (row_idx == dim && col_idx == 0)   ||
+                        (row_idx == dim && col_idx == dim)) {
+                        DPRINTF(Arm, "Sme<NAME>[%d][%d] outprod=%d zn=z%u zm=z%u NewZA=%d\n",
+                                row_idx, col_idx, outprod, (unsigned)zn_sel, (unsigned)zm_sel, (int)sum);
+                    }
+                }
+            }
+        }
+    '''
+
+    # SMOP4A 2-way 
+    smeFmop4aInst('smop4a', 'Smop4a', 'MatrixOPOp', ['int16_t, int32_t'], 
+                smop4Code.replace('<OP>', '+').replace('<NAME>', 'Smop4a'))
+
+    # SMOP4S 2-way
+    smeFmop4aInst('smop4s', 'Smop4s', 'MatrixOPOp', ['int16_t, int32_t'], 
+                smop4Code.replace('<OP>', '-').replace('<NAME>', 'Smop4s'))
 
     bfmop4sWideningCode = r'''
         // imm packing:

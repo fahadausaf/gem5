@@ -147,7 +147,8 @@ namespace Aarch64
     static inline bool isUtmopa4way(uint32_t insn);
     static inline bool isSmopa2way(uint32_t insn);
     static inline bool isSmops2way(uint32_t insn);
-    
+    static inline bool isSmop4a(uint32_t insn);
+    static inline bool isSmop4s(uint32_t insn);
     
     
 
@@ -595,6 +596,42 @@ namespace Aarch64
 
             // Instantiate Smops2way
             return new SmeSmops2way<int16_t, int32_t>(machInst, imm_packed, Zn, Zm);
+        }
+
+        // Check for SMOP4A
+        if (Aarch64::isSmop4a(machInst)) {
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((nreg - 1) << 2) | ((mreg - 1) << 4);
+
+            return new SmeSmop4a<int16_t, int32_t>(machInst, imm_packed, Zn_base, Zm_base);
+        }
+
+        // Check for SMOP4S
+        if (Aarch64::isSmop4s(machInst)) {
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((nreg - 1) << 2) | ((mreg - 1) << 4);
+
+            return new SmeSmop4s<int16_t, int32_t>(machInst, imm_packed, Zn_base, Zm_base);
         }
 
         // ------------------------------------------------------------
@@ -1250,6 +1287,26 @@ namespace Aarch64
 
         constexpr uint32_t base_encoding = 0xA0800018u;
 
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isSmop4a(uint32_t insn)
+    {
+        // Matches SMOP4A (Quarter-tile Signed 16-bit to 32-bit, accumulating)
+        // Fixed bits: [31:24]=0x80, [23:21]=000, [15:10]=010000, [5]=0, [4]=0 (S bit), [3:2]=10
+        constexpr uint32_t operand_mask = 0xFFE0FC3Cu;
+        constexpr uint32_t base_encoding = 0x80004008u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isSmop4s(uint32_t insn)
+    {
+        // Matches SMOP4S (Quarter-tile Signed 16-bit to 32-bit, subtracting)
+        // Bit 4 ('S' bit) is 1
+        constexpr uint32_t operand_mask = 0xFFE0FC3Cu;
+        constexpr uint32_t base_encoding = 0x80004018u;
         return (insn & operand_mask) == base_encoding;
     }
 
