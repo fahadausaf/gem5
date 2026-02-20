@@ -142,8 +142,9 @@ namespace Aarch64
     static inline bool isUmopa(uint32_t insn);
     static inline bool isUmops(uint32_t insn);
     static inline bool isUmopa4way(uint32_t insn);
+    static inline bool isUmops4way(uint32_t insn);
+    static inline bool isUtmopa(uint32_t insn);
     
-
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
     // NOTE: This is called from a different decode tree (aarch64.isa).
@@ -484,6 +485,54 @@ namespace Aarch64
                 // 64-bit variant: 16-bit sources to 64-bit destination
                 return new SmeUmopa4way<uint16_t, uint64_t>(machInst, imm_packed, Zn, Zm);
             }
+        }
+
+        // Check for UMOPS (4-way)
+        if (Aarch64::isUmops4way(machInst)) {
+            const uint8_t sz = bits(machInst, 22, 22);
+            const uint8_t Zm = bits(machInst, 20, 16);
+            const uint8_t Pm = bits(machInst, 15, 13);
+            const uint8_t Pn = bits(machInst, 12, 10);
+            const uint8_t Zn = bits(machInst, 9, 5);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            // Pack Immediate: [1:0] da, [4:2] pn, [7:5] pm
+            const uint64_t imm_packed = (ZAda & 0x3) | 
+                                        ((Pn & 0x7) << 2) | 
+                                        ((Pm & 0x7) << 5);
+
+            if (sz == 0) {
+                // 32-bit variant: 8-bit sources to 32-bit destination
+                return new SmeUmops4way<uint8_t, uint32_t>(machInst, imm_packed, Zn, Zm);
+            } else {
+                // 64-bit variant: 16-bit sources to 64-bit destination
+                return new SmeUmops4way<uint16_t, uint64_t>(machInst, imm_packed, Zn, Zm);
+            }
+        }
+
+        // Check for UTMOPA (2-way Sparse)
+        if (Aarch64::isUtmopa(machInst)) {
+            const uint8_t Zm  = bits(machInst, 20, 16);
+            const uint8_t K   = bits(machInst, 12, 12);
+            const uint8_t Zk2 = bits(machInst, 11, 10);
+            const uint8_t Zn4 = bits(machInst, 9, 6);
+            const uint8_t i2  = bits(machInst, 5, 4);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            // Calculate base register for the Zn multi-vector (Zn * 2)
+            const RegIndex Zn_base = (RegIndex)(Zn4 << 1);
+
+            // Calculate Zk control register (Z20-Z23 or Z28-Z31)
+            // K=0 -> 101xx -> 20 + Zk2
+            // K=1 -> 111xx -> 28 + Zk2
+            const RegIndex Zk_base = (RegIndex)(20 + (K << 3) + Zk2);
+
+            // Pack Immediate: [1:0] da, [3:2] i2 index, [8:4] Zk
+            const uint64_t imm_packed = (ZAda & 0x3) | 
+                                        ((i2 & 0x3) << 2) | 
+                                        ((Zk_base & 0x1F) << 4);
+
+            return new SmeUtmopa2way<uint16_t, uint32_t>(machInst, imm_packed, Zn_base, Zm);
         }
 
         // ------------------------------------------------------------
@@ -1023,6 +1072,58 @@ namespace Aarch64
             (1u << 23) | 
             (1u << 21) | 
             (0x0u << 2); // 0xA1A00000
+
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isUmops4way(uint32_t insn)
+    {
+        // Matches UMOPS (4-way Unsigned 8/16-bit to 32/64-bit, subtracting)
+        // Fixed bits from Arm spec: 
+        // [31:24] = 10100001 (0xA1, bit 24 '1' means Unsigned u0)
+        // [23]    = 1
+        // [21]    = 1        (Unsigned u1)
+        // [4:2]   = 100      (Bit 4 '1' means Subtract)
+        constexpr uint32_t operand_mask = 
+            (0xFFu << 24) | 
+            (1u << 23) | 
+            (1u << 21) | 
+            (0x7u << 2);
+
+        // 0xA1A00000 + 0x10 (Bit 4) = 0xA1A00010
+        constexpr uint32_t base_encoding = 
+            (0xA1u << 24) | 
+            (1u << 23) | 
+            (1u << 21) | 
+            (0x4u << 2); 
+
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isUtmopa(uint32_t insn)
+    {
+        // Matches UTMOPA (2-way Unsigned 16-bit sparse to 32-bit, accumulating)
+        // Fixed bits from Arm spec:
+        // [31:25] = 1000000
+        // [24]    = 0 (Unsigned u0)
+        // [23:21] = 010
+        // [15:13] = 100
+        // [3:2]   = 10
+        constexpr uint32_t operand_mask = 
+            (0x7Fu << 25) | 
+            (1u << 24) | 
+            (0x7u << 21) | 
+            (0x7u << 13) | 
+            (0x3u << 2);
+
+        constexpr uint32_t base_encoding = 
+            (0x40u << 25) | 
+            (0x0u << 24) | 
+            (0x2u << 21) | 
+            (0x4u << 13) | 
+            (0x2u << 2); // 0x80408008
 
         return (insn & operand_mask) == base_encoding;
     }
