@@ -137,8 +137,7 @@ namespace Aarch64
     static inline bool isBftmopaWidening(uint32_t insn);
     static inline bool isFmop4sNonWidening(uint32_t insn);
     static inline bool isFmop4sWidening(uint32_t insn);
-    
-    
+    static inline bool isBmopa(uint32_t insn);
 
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -389,6 +388,23 @@ namespace Aarch64
                                         ((mreg - 1) << 4);
 
             return new SmeFmop4sWidening<uint16_t, uint32_t>(machInst, imm_packed, Zn_base, Zm_base);
+        }
+
+        // Check for BMOPA
+        if (Aarch64::isBmopa(machInst)) {
+            const uint8_t Zm = bits(machInst, 20, 16);
+            const uint8_t Pm = bits(machInst, 15, 13);
+            const uint8_t Pn = bits(machInst, 12, 10);
+            const uint8_t Zn = bits(machInst, 9, 5);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            // Pack Immediate: [1:0] da, [4:2] pn, [7:5] pm
+            const uint64_t imm_packed = (ZAda & 0x3) | 
+                                        ((Pn & 0x7) << 2) | 
+                                        ((Pm & 0x7) << 5);
+
+            // We pass uint32_t since BMOPA is a 32-bit element instruction.
+            return new SmeBmopa<uint32_t, uint32_t>(machInst, imm_packed, Zn, Zm);
         }
 
         // ------------------------------------------------------------
@@ -839,6 +855,18 @@ namespace Aarch64
         // Mask covers: fixed bits, M(20), Zm(18-16), N(9), Zn(8-6), ZAda(1-0)
         constexpr uint32_t rigid_mask = 0xFFE8FC3Cu;
         constexpr uint32_t rigid_val  = 0x81280010u;
+
+        return (insn & rigid_mask) == rigid_val;
+    }
+
+    static inline bool
+    isBmopa(uint32_t insn)
+    {
+        // Matches BMOPA (32-bit integer predicated XNOR popcount)
+        // Fixed bits from spec: 31=1, 23=1, 4=0 (S-bit is 0 for ADD, 1 would be SUB), 3=1, 2=0
+        // Mask covers: 31-24, 23-21, and 4-2
+        constexpr uint32_t rigid_mask = 0xFFE0001Cu;
+        constexpr uint32_t rigid_val  = 0x80800008u;
 
         return (insn & rigid_mask) == rigid_val;
     }
