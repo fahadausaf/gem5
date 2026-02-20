@@ -4432,6 +4432,90 @@ let {{
 
     smeFmop4aInst('utmopa2way', 'Utmopa2way', 'MatrixOPOp', ['uint16_t, uint32_t'], utmopaCode)
 
+    # UTMOPA 4-way
+    utmopa4wayCode = r'''
+        // 1. Unpack metadata
+        const uint8_t da = imm & 0x3;
+        const uint8_t index = (imm >> 2) & 0x3;
+        const uint8_t zk_idx = (imm >> 4) & 0x1F;
+
+        auto tile = getTile<TPDElem>(ZA, da);
+        const int dim = eCount; // Number of 32-bit elements
+
+        DPRINTF(Arm, "SmeUtmopa4way: da=%u index=%u zk=z%u dim=%d Zn1=z%u Zn2=z%u Zm=z%u\n",
+                da, index, zk_idx, dim, (unsigned)this->op1, (unsigned)(this->op1 + 1), (unsigned)this->op2);
+
+        // 2. Fetch Vectors
+        ArmISA::VecRegContainer zn1, zn2, zm, zk;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op1], &zn1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op1 + 1], &zn2);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op2], &zm);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zk_idx], &zk);
+
+        const TPSElem *zn1_ptr = zn1.as<TPSElem>();
+        const TPSElem *zn2_ptr = zn2.as<TPSElem>();
+        const TPSElem *zm_ptr  = zm.as<TPSElem>();
+        const uint8_t *zk_ptr  = zk.as<uint8_t>();
+
+        // 3. 4-Way Sparse Outer Product Execution
+        for (int col = 0; col < dim; ++col) {
+            
+            // Read the 8-bit control segment for this specific column
+            // Since it's exactly 8 bits per column, the byte offset is natively direct
+            int byte_offset = index * dim + col;
+            uint8_t ctrl_8bit = zk_ptr[byte_offset];
+
+            // Fetch the 4 column elements from Zm
+            TPDElem ecol[4];
+            ecol[0] = static_cast<TPDElem>(zm_ptr[4 * col + 0]);
+            ecol[1] = static_cast<TPDElem>(zm_ptr[4 * col + 1]);
+            ecol[2] = static_cast<TPDElem>(zm_ptr[4 * col + 2]);
+            ecol[3] = static_cast<TPDElem>(zm_ptr[4 * col + 3]);
+
+            for (int row = 0; row < dim; ++row) {
+                
+                // Populate the 4 row elements
+                TPDElem erow[4] = {0, 0, 0, 0};
+                int active1 = 0;
+                int active2 = 0;
+
+                // Scan bits 0-3 for Zn1 (max 2 active)
+                for (int e = 0; e < 4; ++e) {
+                    if (active1 < 2 && (ctrl_8bit & (1 << e))) {
+                        erow[active1++] = static_cast<TPDElem>(zn1_ptr[4 * row + e]);
+                    }
+                }
+                
+                // Scan bits 4-7 for Zn2 (max 2 active)
+                for (int e = 0; e < 4; ++e) {
+                    if (active2 < 2 && (ctrl_8bit & (1 << (e + 4)))) {
+                        erow[2 + active2++] = static_cast<TPDElem>(zn2_ptr[4 * row + e]);
+                    }
+                }
+
+                // 4-Way Dot Product Accumulate
+                TPDElem sum = tile[row][col];
+                sum += (erow[0] * ecol[0]);
+                sum += (erow[1] * ecol[1]);
+                sum += (erow[2] * ecol[2]);
+                sum += (erow[3] * ecol[3]);
+                tile[row][col] = sum;
+
+                // Debug Print
+                if ((row == 0       && col == 0)       ||
+                    (row == 0       && col == dim - 1) ||
+                    (row == dim - 1 && col == 0)       ||
+                    (row == dim - 1 && col == dim - 1)) {
+                    DPRINTF(Arm, "SmeUtmopa4way[%d][%d] ctrl=0x%x erow={%u,%u,%u,%u} NewZA=%u\n",
+                            row, col, ctrl_8bit, erow[0], erow[1], erow[2], erow[3], tile[row][col]);
+                }
+            }
+        }
+    '''
+
+    smeFmop4aInst('utmopa4way', 'Utmopa4way', 'MatrixOPOp', ['uint8_t, uint32_t'], utmopa4wayCode)
+
+
     # SMSTART
     smstartSmstopCode = '''
         // Bit 0 of imm determines if we are setting or clearing
