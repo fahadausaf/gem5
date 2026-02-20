@@ -838,7 +838,7 @@ namespace Aarch64
         // Fixed bits from spec: 31=1, 24=1, 19=1, 4=1 (S-bit)
         // Mask covers: fixed bits, M(20), Zm(18-16), N(9), Zn(8-6), ZAda(1-0)
         constexpr uint32_t rigid_mask = 0xFFE8FC3Cu;
-        constexpr uint32_t rigid_val  = 0x81080010u;
+        constexpr uint32_t rigid_val  = 0x81280010u;
 
         return (insn & rigid_mask) == rigid_val;
     }
