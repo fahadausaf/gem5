@@ -3988,6 +3988,71 @@ let {{
     # We pass uint32_t twice so MatrixOPOp maps it successfully to your T1/T2 templates.
     smeFmop4aInst('bmopa', 'Bmopa', 'MatrixOPOp', ['uint32_t, uint32_t'], bmopaCode)
 
+    # BMOPS
+    bmopsCode = r'''
+        // 1. Unpack metadata from the 64-bit imm field
+        const uint8_t da = imm & 0x3;
+        const uint8_t pn = (imm >> 2) & 0x7;
+        const uint8_t pm = (imm >> 5) & 0x7;
+
+        auto tile = getTile<uint32_t>(ZA, da);
+        const int dim = eCount;
+
+        DPRINTF(Arm, "SmeBmops: da=%u pn=p%u pm=p%u dim=%d Zn=z%u Zm=z%u\n",
+                da, pn, pm, dim, (unsigned)this->op1, (unsigned)this->op2);
+
+        // 2. Fetch Vector Registers
+        ArmISA::VecRegContainer zn, zm;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op1], &zn);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op2], &zm);
+
+        const uint32_t *zn_ptr = zn.as<uint32_t>();
+        const uint32_t *zm_ptr = zm.as<uint32_t>();
+
+        // 3. Fetch Predicate Registers
+        ArmISA::VecPredRegContainer pn_reg, pm_reg;
+        xc->tcBase()->getReg(ArmISA::vecPredRegClass[pn], &pn_reg);
+        xc->tcBase()->getReg(ArmISA::vecPredRegClass[pm], &pm_reg);
+
+        auto is_active = [](const ArmISA::VecPredRegContainer& preg, int index) -> bool {
+            int bit_idx = index * 4; 
+            int byte_idx = bit_idx / 8;
+            int bit_offset = bit_idx % 8;
+            return (preg.as<uint8_t>()[byte_idx] >> bit_offset) & 1;
+        };
+
+        // 4. Outer Product Execution
+        for (int row = 0; row < dim; ++row) {
+            uint32_t elem1 = zn_ptr[row];
+            bool active1 = is_active(pn_reg, row);
+
+            for (int col = 0; col < dim; ++col) {
+                uint32_t elem2 = zm_ptr[col];
+                bool active2 = is_active(pm_reg, col);
+
+                if (active1 && active2) {
+                    // Bitwise XNOR Popcount
+                    uint32_t xnor_val = ~(elem1 ^ elem2);
+                    uint32_t res = __builtin_popcount(xnor_val);
+                    
+                    // BMOPS Core Logic: Subtract destructively
+                    tile[row][col] -= res;
+                    
+                    if ((row == 0       && col == 0)       ||
+                        (row == 0       && col == dim - 1) ||
+                        (row == dim - 1 && col == 0)       ||
+                        (row == dim - 1 && col == dim - 1)) {
+                        DPRINTF(Arm, "SmeBmops[%d][%d] zn=0x%x zm=0x%x xnor=0x%x res=%u NewZA=%u\n",
+                                row, col, elem1, elem2, xnor_val, res, tile[row][col]);
+                    }
+                }
+            }
+        }
+    '''
+
+    # Generator Call for BMOPS
+    smeFmop4aInst('bmops', 'Bmops', 'MatrixOPOp', ['uint32_t, uint32_t'], bmopsCode)
+
     # SMSTART
     smstartSmstopCode = '''
         // Bit 0 of imm determines if we are setting or clearing

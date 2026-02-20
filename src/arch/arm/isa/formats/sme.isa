@@ -138,6 +138,7 @@ namespace Aarch64
     static inline bool isFmop4sNonWidening(uint32_t insn);
     static inline bool isFmop4sWidening(uint32_t insn);
     static inline bool isBmopa(uint32_t insn);
+    static inline bool isBmops(uint32_t insn);
 
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -405,6 +406,23 @@ namespace Aarch64
 
             // We pass uint32_t since BMOPA is a 32-bit element instruction.
             return new SmeBmopa<uint32_t, uint32_t>(machInst, imm_packed, Zn, Zm);
+        }
+
+        // Check for BMOPS
+        if (Aarch64::isBmops(machInst)) {
+            const uint8_t Zm = bits(machInst, 20, 16);
+            const uint8_t Pm = bits(machInst, 15, 13);
+            const uint8_t Pn = bits(machInst, 12, 10);
+            const uint8_t Zn = bits(machInst, 9, 5);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            // Pack Immediate: [1:0] da, [4:2] pn, [7:5] pm
+            const uint64_t imm_packed = (ZAda & 0x3) | 
+                                        ((Pn & 0x7) << 2) | 
+                                        ((Pm & 0x7) << 5);
+
+            // Pass 'Bmops' to the generator so it matches
+            return new SmeBmops<uint32_t, uint32_t>(machInst, imm_packed, Zn, Zm);
         }
 
         // ------------------------------------------------------------
@@ -869,6 +887,22 @@ namespace Aarch64
         constexpr uint32_t rigid_val  = 0x80800008u;
 
         return (insn & rigid_mask) == rigid_val;
+    }
+
+    static inline bool
+    isBmops(uint32_t insn)
+    {
+        // Matches BMOPS (32-bit integer predicated XNOR popcount, subtracting)
+        // Fixed bits from Arm spec: [31:24]=10000000, [23:21]=100, [4:2]=110 (Bit 4 is 1 for BMOPS)
+        constexpr uint32_t operand_mask = 
+            (0xFFu << 24) | 
+            (0x7u  << 21) | 
+            (0x7u  << 2);
+
+        // Bit 4 is '1', so the lower byte is 0001 1000 -> 0x18
+        constexpr uint32_t base_encoding = 0x80800018u;
+
+        return (insn & operand_mask) == base_encoding;
     }
 
     static inline bool
