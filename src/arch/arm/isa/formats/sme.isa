@@ -135,6 +135,9 @@ namespace Aarch64
     static inline bool isBfmop4s(uint32_t insn);
     static inline bool isBftmopa(uint32_t insn);
     static inline bool isBftmopaWidening(uint32_t insn);
+    static inline bool isFmop4sNonWidening(uint32_t insn);
+    static inline bool isFmop4sWidening(uint32_t insn);
+    
     
 
 
@@ -337,6 +340,55 @@ namespace Aarch64
 
             // Inputs are BF16 (uint16_t), Output is FP32 (uint32_t)
             return new SmeBftmopaWidening<uint16_t, uint32_t>(machInst, imm_packed, Zn_base, Zm);
+        }
+
+        // Check for FMOP4S (Non-widening)
+        if (Aarch64::isFmop4sNonWidening(machInst)) {
+            const uint8_t sz  = bits(machInst, 24, 24); 
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            // Pack: [1:0] da, [3:2] nreg-1, [5:4] mreg-1
+            const uint64_t imm_packed = (ZAda & 0x3) | 
+                                        ((nreg - 1) << 2) | 
+                                        ((mreg - 1) << 4);
+
+            if (sz == 1) { // FP16
+                return new SmeFmop4sNonWidening<uint16_t, uint16_t>(machInst, imm_packed, Zn_base, Zm_base);
+            } else {       // FP32
+                return new SmeFmop4sNonWidening<uint32_t, uint32_t>(machInst, imm_packed, Zn_base, Zm_base);
+            }
+        }
+
+        // Check for FMOP4S (Widening FP16 -> FP32)
+        if (Aarch64::isFmop4sWidening(machInst)) {
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            // Pack Immediate: [1:0] da, [3:2] nreg-1, [5:4] mreg-1
+            const uint64_t imm_packed = (ZAda & 0x3) | 
+                                        ((nreg - 1) << 2) | 
+                                        ((mreg - 1) << 4);
+
+            return new SmeFmop4sWidening<uint16_t, uint32_t>(machInst, imm_packed, Zn_base, Zm_base);
         }
 
         // ------------------------------------------------------------
@@ -752,6 +804,43 @@ namespace Aarch64
         constexpr uint32_t base_encoding = 0x81400000u;
 
         return (insn & ~operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isFmop4sNonWidening(uint32_t insn)
+    {
+        constexpr uint32_t operand_mask =
+            (1u << 24) |    // sz (1 bit)
+            (1u << 20) |    // M (1 bit)
+            (0x7u << 16) |  // Zm (3 bits)
+            (1u << 9)  |    // N (1 bit)
+            (0x7u << 6)  |  // Zn (3 bits)
+            (1u << 3)  |    // sz (1 bit)
+            (0x3u << 0);    // ZAda (2 bits)
+
+        // Base encoding: 1000 0000 0000 0000 0000 0000 0001 0000
+        // Fixes bits 31:25 to 1000000 and bit 4 to 1
+        constexpr uint32_t base_encoding = 0x80000010u;
+
+        if ((insn & ~operand_mask) != base_encoding)
+            return false;
+
+        // Validate that both 'sz' bits match to confirm this is a valid encoding
+        bool sz24 = (insn >> 24) & 1;
+        bool sz3  = (insn >> 3) & 1;
+        return sz24 == sz3;
+    }
+
+    static inline bool
+    isFmop4sWidening(uint32_t insn)
+    {
+        // Matches FMOP4S Widening (FP16 -> FP32)
+        // Fixed bits from spec: 31=1, 24=1, 19=1, 4=1 (S-bit)
+        // Mask covers: fixed bits, M(20), Zm(18-16), N(9), Zn(8-6), ZAda(1-0)
+        constexpr uint32_t rigid_mask = 0xFFE8FC3Cu;
+        constexpr uint32_t rigid_val  = 0x81080010u;
+
+        return (insn & rigid_mask) == rigid_val;
     }
 
     static inline bool
