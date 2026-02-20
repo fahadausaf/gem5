@@ -149,7 +149,8 @@ namespace Aarch64
     static inline bool isSmops2way(uint32_t insn);
     static inline bool isSmop4a(uint32_t insn);
     static inline bool isSmop4s(uint32_t insn);
-    
+    static inline bool isSmop4a4way(uint32_t insn);
+    static inline bool isSmop4s4way(uint32_t insn);
     
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -632,6 +633,52 @@ namespace Aarch64
             const uint64_t imm_packed = (ZAda & 0x3) | ((nreg - 1) << 2) | ((mreg - 1) << 4);
 
             return new SmeSmop4s<int16_t, int32_t>(machInst, imm_packed, Zn_base, Zm_base);
+        }
+
+        // Check for SMOP4A (4-way)
+        if (Aarch64::isSmop4a4way(machInst)) {
+            const uint8_t sz  = bits(machInst, 22, 22);
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((nreg - 1) << 2) | ((mreg - 1) << 4);
+
+            if (sz == 0) {
+                return new SmeSmop4a4way<int8_t, int32_t>(machInst, imm_packed, Zn_base, Zm_base);
+            } else {
+                return new SmeSmop4a4way<int16_t, int64_t>(machInst, imm_packed, Zn_base, Zm_base);
+            }
+        }
+
+        // Check for SMOP4S (4-way)
+        if (Aarch64::isSmop4s4way(machInst)) {
+            const uint8_t sz  = bits(machInst, 22, 22);
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((nreg - 1) << 2) | ((mreg - 1) << 4);
+
+            if (sz == 0) {
+                return new SmeSmop4s4way<int8_t, int32_t>(machInst, imm_packed, Zn_base, Zm_base);
+            } else {
+                return new SmeSmop4s4way<int16_t, int64_t>(machInst, imm_packed, Zn_base, Zm_base);
+            }
         }
 
         // ------------------------------------------------------------
@@ -1307,6 +1354,28 @@ namespace Aarch64
         // Bit 4 ('S' bit) is 1
         constexpr uint32_t operand_mask = 0xFFE0FC3Cu;
         constexpr uint32_t base_encoding = 0x80004018u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isSmop4a4way(uint32_t insn)
+    {
+        // Matches SMOP4A (Quarter-tile Signed 8/16-bit to 32/64-bit, 4-way accumulating)
+        // Fixed bits: 
+        // [31:24]=0x80, [23]=0, [21]=0, [15:10]=010000 (0x10), [5]=0, [4]=0 (S bit), [3:2]=00
+        // Note: Bit 22 is 'sz', excluded from mask.
+        constexpr uint32_t operand_mask = 0xFFA0FC2Cu;
+        constexpr uint32_t base_encoding = 0x80004000u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isSmop4s4way(uint32_t insn)
+    {
+        // Matches SMOP4S (Quarter-tile Signed 8/16-bit to 32/64-bit, 4-way subtracting)
+        // Bit 4 ('S' bit) is 1, adding 0x10 to the base
+        constexpr uint32_t operand_mask = 0xFFA0FC2Cu;
+        constexpr uint32_t base_encoding = 0x80004010u;
         return (insn & operand_mask) == base_encoding;
     }
 

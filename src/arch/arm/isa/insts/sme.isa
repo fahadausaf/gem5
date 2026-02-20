@@ -3554,6 +3554,71 @@ let {{
     smeFmop4aInst('smop4s', 'Smop4s', 'MatrixOPOp', ['int16_t, int32_t'], 
                 smop4Code.replace('<OP>', '-').replace('<NAME>', 'Smop4s'))
 
+    smop4_4wayCode = r'''
+        const uint8_t da   = imm & 0x3;
+        const uint8_t nreg = ((imm >> 2) & 0x3) + 1;
+        const uint8_t mreg = ((imm >> 4) & 0x3) + 1;
+
+        auto tile = getTile<TPDElem>(ZA, da);
+        const int dim = eCount / 2;
+
+        DPRINTF(Arm, "Sme<NAME>: da=%u nreg=%u mreg=%u eCount=%u dim=%d op1base=z%u op2base=z%u sizeof(src)=%lu\n",
+                da, nreg, mreg, eCount, dim, (unsigned)this->op1, (unsigned)this->op2, sizeof(TPSElem));
+
+        for (int outprod = 0; outprod < 4; ++outprod) {
+            const int row_hv = outprod / 2;
+            const int col_hv = outprod % 2;
+            const int row_base = row_hv * dim;
+            const int col_base = col_hv * dim;
+
+            const RegIndex zn_sel = this->op1 + (nreg - 1) * col_hv;
+            const RegIndex zm_sel = this->op2 + (mreg - 1) * row_hv;
+
+            ArmISA::VecRegContainer zn, zm;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zn_sel], &zn);
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zm_sel], &zm);
+
+            const TPSElem *zn_ptr = zn.as<TPSElem>();
+            const TPSElem *zm_ptr = zm.as<TPSElem>();
+
+            for (int row = 0; row < dim; ++row) {
+                for (int col = 0; col < dim; ++col) {
+                    const int row_idx = row_base + row;
+                    const int col_idx = col_base + col;
+
+                    TPDElem sum = tile[row_idx][col_idx];
+
+                    // 4-Way Signed Dot Product
+                    for (int k = 0; k < 4; ++k) {
+                        TPDElem val1 = static_cast<TPDElem>(zn_ptr[4 * row_idx + k]);
+                        TPDElem val2 = static_cast<TPDElem>(zm_ptr[4 * col_idx + k]);
+                        sum <OP>= (val1 * val2);
+                    }
+
+                    tile[row_idx][col_idx] = sum;
+
+                    if ((row_idx == 0   && col_idx == 0)   ||
+                        (row_idx == 0   && col_idx == dim) ||
+                        (row_idx == dim && col_idx == 0)   ||
+                        (row_idx == dim && col_idx == dim)) {
+                        DPRINTF(Arm, "Sme<NAME>[%d][%d] outprod=%d zn=z%u zm=z%u NewZA=%lld\n",
+                                row_idx, col_idx, outprod, (unsigned)zn_sel, (unsigned)zm_sel, (long long)sum);
+                    }
+                }
+            }
+        }
+    '''
+
+    # SMOP4A 4-way
+    smeFmop4aInst('smop4a4way', 'Smop4a4way', 'MatrixOPOp', 
+                ['int8_t, int32_t', 'int16_t, int64_t'], 
+                smop4_4wayCode.replace('<OP>', '+').replace('<NAME>', 'Smop4a4way'))
+
+    # SMOP4S 4-way
+    smeFmop4aInst('smop4s4way', 'Smop4s4way', 'MatrixOPOp', 
+                ['int8_t, int32_t', 'int16_t, int64_t'], 
+                smop4_4wayCode.replace('<OP>', '-').replace('<NAME>', 'Smop4s4way'))
+
     bfmop4sWideningCode = r'''
         // imm packing:
         // [1:0] da, [3:2] nreg, [5:4] mreg
