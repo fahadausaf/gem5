@@ -3421,26 +3421,22 @@ let {{
                  ['int8_t', 'int16_t'], ['int32_t', 'int64_t'],
                  intMopxCode % "-")
 
-    # SMOPA 2-way
-    smopa2wayCode = r'''
-        // 1. Unpack metadata from the 64-bit imm field
+    # Shared 2-way signed integer dot product code
+    smop2wayCode = r'''
         const uint8_t da = imm & 0x3;
         const uint8_t pn = (imm >> 2) & 0x7;
         const uint8_t pm = (imm >> 5) & 0x7;
 
-        // Tile elements are 32-bit signed ints (TPDElem)
         auto tile = getTile<TPDElem>(ZA, da);
         const int dim = eCount;
 
-        DPRINTF(Arm, "SmeSmopa2way: da=%u pn=p%u pm=p%u dim=%d Zn=z%u Zm=z%u\n",
+        DPRINTF(Arm, "Sme<NAME>2way: da=%u pn=p%u pm=p%u dim=%d Zn=z%u Zm=z%u\n",
                 da, pn, pm, dim, (unsigned)this->op1, (unsigned)this->op2);
 
-        // 2. Fetch Vectors & Predicates
         ArmISA::VecRegContainer zn, zm;
         xc->tcBase()->getReg(ArmISA::vecRegClass[this->op1], &zn);
         xc->tcBase()->getReg(ArmISA::vecRegClass[this->op2], &zm);
         
-        // Source elements are 16-bit signed ints (TPSElem)
         const TPSElem *zn_ptr = zn.as<TPSElem>();
         const TPSElem *zm_ptr = zm.as<TPSElem>();
 
@@ -3448,7 +3444,6 @@ let {{
         xc->tcBase()->getReg(ArmISA::vecPredRegClass[pn], &pn_reg);
         xc->tcBase()->getReg(ArmISA::vecPredRegClass[pm], &pm_reg);
 
-        // SVE Predicate logic for 16-bit elements (2 bytes per element)
         auto is_active = [](const ArmISA::VecPredRegContainer& preg, int index) -> bool {
             int bit_idx = index * 2; 
             int byte_idx = bit_idx / 8;
@@ -3456,45 +3451,43 @@ let {{
             return (preg.as<uint8_t>()[byte_idx] >> bit_offset) & 1;
         };
 
-        // 4. 2-Way Outer Product Execution
         for (int row = 0; row < dim; ++row) {
             for (int col = 0; col < dim; ++col) {
                 
-                // Read initial accumulator value
                 TPDElem sum = tile[row][col];
                 
-                // 2-Way dot product inner loop
                 for (int k = 0; k < 2; ++k) {
                     int idx_n = 2 * row + k;
                     int idx_m = 2 * col + k;
 
-                    bool active1 = is_active(pn_reg, idx_n);
-                    bool active2 = is_active(pm_reg, idx_m);
-
-                    if (active1 && active2) {
-                        // Widen the SIGNED 16-bit ints to 32-bit (auto sign-extends), multiply, and accumulate
+                    if (is_active(pn_reg, idx_n) && is_active(pm_reg, idx_m)) {
                         TPDElem val1 = static_cast<TPDElem>(zn_ptr[idx_n]);
                         TPDElem val2 = static_cast<TPDElem>(zm_ptr[idx_m]);
-                        sum += (val1 * val2);
+                        
+                        // Dynamic operator injected by Python!
+                        sum <OP>= (val1 * val2);
                     }
                 }
                 
-                // Writeback to tile
                 tile[row][col] = sum;
                 
-                // Debug corner cases
                 if ((row == 0       && col == 0)       ||
                     (row == 0       && col == dim - 1) ||
                     (row == dim - 1 && col == 0)       ||
                     (row == dim - 1 && col == dim - 1)) {
-                    DPRINTF(Arm, "SmeSmopa2way[%d][%d] NewZA=%d\n", row, col, (int)tile[row][col]);
+                    DPRINTF(Arm, "Sme<NAME>2way[%d][%d] NewZA=%d\n", row, col, (int)tile[row][col]);
                 }
             }
         }
     '''
 
-    # Generator Call: SIGNED 16-bit source to SIGNED 32-bit destination
-    smeFmop4aInst('smopa2way', 'Smopa2way', 'MatrixOPOp', ['int16_t, int32_t'], smopa2wayCode)
+    # SMOPA 2-way 
+    smeFmop4aInst('smopa2way', 'Smopa2way', 'MatrixOPOp', ['int16_t, int32_t'], 
+                smop2wayCode.replace('<OP>', '+').replace('<NAME>', 'Smopa'))
+
+    # Generate SMOPS 2-way
+    smeFmop4aInst('smops2way', 'Smops2way', 'MatrixOPOp', ['int16_t, int32_t'], 
+                smop2wayCode.replace('<OP>', '-').replace('<NAME>', 'Smops'))
 
     bfmop4sWideningCode = r'''
         // imm packing:

@@ -146,6 +146,8 @@ namespace Aarch64
     static inline bool isUtmopa(uint32_t insn);
     static inline bool isUtmopa4way(uint32_t insn);
     static inline bool isSmopa2way(uint32_t insn);
+    static inline bool isSmops2way(uint32_t insn);
+    
     
     
 
@@ -577,6 +579,22 @@ namespace Aarch64
 
             // Notice we use signed integer templates (int16_t, int32_t) to ensure correct sign extension
             return new SmeSmopa2way<int16_t, int32_t>(machInst, imm_packed, Zn, Zm);
+        }
+
+        // Check for SMOPS (2-way)
+        if (Aarch64::isSmops2way(machInst)) {
+            const uint8_t Zm = bits(machInst, 20, 16);
+            const uint8_t Pm = bits(machInst, 15, 13);
+            const uint8_t Pn = bits(machInst, 12, 10);
+            const uint8_t Zn = bits(machInst, 9, 5);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint64_t imm_packed = (ZAda & 0x3) | 
+                                        ((Pn & 0x7) << 2) | 
+                                        ((Pm & 0x7) << 5);
+
+            // Instantiate Smops2way
+            return new SmeSmops2way<int16_t, int32_t>(machInst, imm_packed, Zn, Zm);
         }
 
         // ------------------------------------------------------------
@@ -1216,6 +1234,21 @@ namespace Aarch64
             (0x7u  << 2);
 
         constexpr uint32_t base_encoding = 0xA0800008u;
+
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isSmops2way(uint32_t insn)
+    {
+        // Matches SMOPS (2-way Signed 16-bit to 32-bit, subtracting)
+        // Same mask as SMOPA, but Bit 4 ('S' bit) is 1
+        constexpr uint32_t operand_mask = 
+            (0xFFu << 24) | 
+            (0x7u  << 21) | 
+            (0x7u  << 2);
+
+        constexpr uint32_t base_encoding = 0xA0800018u;
 
         return (insn & operand_mask) == base_encoding;
     }
