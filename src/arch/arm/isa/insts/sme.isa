@@ -4208,6 +4208,84 @@ let {{
     # Generator Call: 16-bit source to 32-bit destination
     smeFmop4aInst('umops2way', 'Umops2way', 'MatrixOPOp', ['uint16_t, uint32_t'], umopsCode)
 
+    # UMOPA 4-way
+    umopa4wayCode = r'''
+        // 1. Unpack metadata from the 64-bit imm field
+        const uint8_t da = imm & 0x3;
+        const uint8_t pn = (imm >> 2) & 0x7;
+        const uint8_t pm = (imm >> 5) & 0x7;
+
+        // Tile elements are 32-bit or 64-bit (TPDElem)
+        auto tile = getTile<TPDElem>(ZA, da);
+
+        // MatrixOPOp automatically provides eCount based on TPDElem
+        const int dim = eCount;
+
+        DPRINTF(Arm, "SmeUmopa4way: da=%u pn=p%u pm=p%u dim=%d Zn=z%u Zm=z%u sizeof(src)=%lu\n",
+                da, pn, pm, dim, (unsigned)this->op1, (unsigned)this->op2, sizeof(TPSElem));
+
+        // 2. Fetch Vectors & Predicates
+        ArmISA::VecRegContainer zn, zm;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op1], &zn);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op2], &zm);
+        
+        // Source elements are 8-bit or 16-bit (TPSElem)
+        const TPSElem *zn_ptr = zn.as<TPSElem>();
+        const TPSElem *zm_ptr = zm.as<TPSElem>();
+
+        ArmISA::VecPredRegContainer pn_reg, pm_reg;
+        xc->tcBase()->getReg(ArmISA::vecPredRegClass[pn], &pn_reg);
+        xc->tcBase()->getReg(ArmISA::vecPredRegClass[pm], &pm_reg);
+
+        // Dynamic SVE Predicate logic: Calculates active bit based on source element byte width
+        auto is_active = [](const ArmISA::VecPredRegContainer& preg, int index) -> bool {
+            int byte_offset = index * sizeof(TPSElem); 
+            int preg_byte = byte_offset / 8;
+            int preg_bit = byte_offset % 8;
+            return (preg.as<uint8_t>()[preg_byte] >> preg_bit) & 1;
+        };
+
+        // 4. 4-Way Outer Product Execution
+        for (int row = 0; row < dim; ++row) {
+            for (int col = 0; col < dim; ++col) {
+                
+                // Read initial accumulator value
+                TPDElem sum = tile[row][col];
+                
+                // 4-Way dot product inner loop
+                for (int k = 0; k < 4; ++k) {
+                    int idx_n = 4 * row + k;
+                    int idx_m = 4 * col + k;
+
+                    bool active1 = is_active(pn_reg, idx_n);
+                    bool active2 = is_active(pm_reg, idx_m);
+
+                    if (active1 && active2) {
+                        // Widen the unsigned ints, multiply, and accumulate
+                        TPDElem val1 = static_cast<TPDElem>(zn_ptr[idx_n]);
+                        TPDElem val2 = static_cast<TPDElem>(zm_ptr[idx_m]);
+                        sum += (val1 * val2);
+                    }
+                }
+                
+                // Writeback to tile
+                tile[row][col] = sum;
+                
+                // Debug corner cases (using long long cast to safely print either 32 or 64-bit ints)
+                if ((row == 0       && col == 0)       ||
+                    (row == 0       && col == dim - 1) ||
+                    (row == dim - 1 && col == 0)       ||
+                    (row == dim - 1 && col == dim - 1)) {
+                    DPRINTF(Arm, "SmeUmopa4way[%d][%d] NewZA=%llu\n", 
+                            row, col, (unsigned long long)tile[row][col]);
+                }
+            }
+        }
+    '''
+
+    smeFmop4aInst('umopa4way', 'Umopa4way', 'MatrixOPOp', 
+                ['uint8_t, uint32_t', 'uint16_t, uint64_t'], umopa4wayCode)
+
     # SMSTART
     smstartSmstopCode = '''
         // Bit 0 of imm determines if we are setting or clearing
