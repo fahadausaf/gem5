@@ -153,6 +153,10 @@ namespace Aarch64
     static inline bool isSmop4s4way(uint32_t insn);
     static inline bool isSumop4a4way(uint32_t insn);
     static inline bool isSumop4s4way(uint32_t insn);
+    static inline bool isUmop4a(uint32_t insn);
+    static inline bool isUmop4s(uint32_t insn);
+    static inline bool isUmop4a4way(uint32_t insn);
+    static inline bool isUmop4s4way(uint32_t insn);
     
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -727,6 +731,88 @@ namespace Aarch64
                 return new SmeSumop4s4way<uint8_t, uint32_t>(machInst, imm_packed, Zn_base, Zm_base);
             } else {
                 return new SmeSumop4s4way<uint16_t, uint64_t>(machInst, imm_packed, Zn_base, Zm_base);
+            }
+        }
+
+        // Check for UMOP4A (2-way, Unsigned)
+        if (Aarch64::isUmop4a(machInst)) {
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((nreg - 1) << 2) | ((mreg - 1) << 4);
+
+            return new SmeUmop4a<uint16_t, uint32_t>(machInst, imm_packed, Zn_base, Zm_base);
+        }
+
+        // Check for UMOP4S (2-way, Unsigned)
+        if (Aarch64::isUmop4s(machInst)) {
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((nreg - 1) << 2) | ((mreg - 1) << 4);
+
+            return new SmeUmop4s<uint16_t, uint32_t>(machInst, imm_packed, Zn_base, Zm_base);
+        }
+
+        // Check for UMOP4A (4-way, Unsigned)
+        if (Aarch64::isUmop4a4way(machInst)) {
+            const uint8_t sz  = bits(machInst, 22, 22);
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((nreg - 1) << 2) | ((mreg - 1) << 4);
+
+            if (sz == 0) {
+                return new SmeUmop4a4way<uint8_t, uint32_t>(machInst, imm_packed, Zn_base, Zm_base);
+            } else {
+                return new SmeUmop4a4way<uint16_t, uint64_t>(machInst, imm_packed, Zn_base, Zm_base);
+            }
+        }
+
+        // Check for UMOP4S (4-way, Unsigned)
+        if (Aarch64::isUmop4s4way(machInst)) {
+            const uint8_t sz  = bits(machInst, 22, 22);
+            const uint8_t M   = bits(machInst, 20, 20);
+            const uint8_t Zm3 = bits(machInst, 18, 16);
+            const uint8_t N   = bits(machInst, 9, 9);
+            const uint8_t Zn3 = bits(machInst, 8, 6);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const uint8_t nreg = N ? 2 : 1;
+            const uint8_t mreg = M ? 2 : 1;
+            const RegIndex Zn_base = (RegIndex)(Zn3 << 1);
+            const RegIndex Zm_base = (RegIndex)(16 + (Zm3 << 1));
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((nreg - 1) << 2) | ((mreg - 1) << 4);
+
+            if (sz == 0) {
+                return new SmeUmop4s4way<uint8_t, uint32_t>(machInst, imm_packed, Zn_base, Zm_base);
+            } else {
+                return new SmeUmop4s4way<uint16_t, uint64_t>(machInst, imm_packed, Zn_base, Zm_base);
             }
         }
 
@@ -1446,6 +1532,43 @@ namespace Aarch64
         // Bit 4 ('S' bit) is 1, adding 0x10 to the base
         constexpr uint32_t operand_mask = 0xFFA0FC3Cu;
         constexpr uint32_t base_encoding = 0x80200010u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isUmop4a(uint32_t insn)
+    {
+        // Matches UMOP4A (Quarter-tile Unsigned 16-bit to 32-bit, accumulating)
+        // Fixed bits: 
+        // [31:24]=0x81 (u0=1), [23:21]=001 (u1=1), [15:10]=010000 (0x10), [5]=0, [4]=0 (S bit), [3:2]=10
+        constexpr uint32_t operand_mask = 0xFFE0FC3Cu;
+        constexpr uint32_t base_encoding = 0x81204008u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isUmop4s(uint32_t insn)
+    {
+        // Matches UMOP4S (Quarter-tile Unsigned 16-bit to 32-bit, subtracting)
+        // Bit 4 ('S' bit) is 1, adding 0x10 to the base
+        constexpr uint32_t operand_mask = 0xFFE0FC3Cu;
+        constexpr uint32_t base_encoding = 0x81204018u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isUmop4a4way(uint32_t insn)
+    {
+        constexpr uint32_t operand_mask = 0xFFA0FC3Cu;
+        constexpr uint32_t base_encoding = 0x81204000u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isUmop4s4way(uint32_t insn)
+    {
+        constexpr uint32_t operand_mask = 0xFFA0FC3Cu;
+        constexpr uint32_t base_encoding = 0x81204010u;
         return (insn & operand_mask) == base_encoding;
     }
 
