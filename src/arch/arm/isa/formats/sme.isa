@@ -159,6 +159,7 @@ namespace Aarch64
     static inline bool isUmop4s4way(uint32_t insn);
     static inline bool isUsmop4a(uint32_t insn);
     static inline bool isUsmop4s(uint32_t insn);
+    static inline bool isStmopa2way(uint32_t insn);
 
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -864,6 +865,24 @@ namespace Aarch64
             }
         }
 
+        // Check for STMOPA (2-way Sparse, Signed)
+        if (Aarch64::isStmopa2way(machInst)) {
+            const uint8_t Zm  = bits(machInst, 20, 16);
+            const uint8_t K   = bits(machInst, 12, 12);
+            const uint8_t Zk2 = bits(machInst, 11, 10);
+            const uint8_t Zn4 = bits(machInst, 9, 6);
+            const uint8_t i2  = bits(machInst, 5, 4);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const RegIndex Zn_base = (RegIndex)(Zn4 << 1);
+            const RegIndex Zk_base = (RegIndex)(20 + (K << 3) + Zk2);
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((i2 & 0x3) << 2) | ((Zk_base & 0x1F) << 4);
+
+            // Instantiate with signed types (int16_t -> int32_t) to ensure correct sign extension
+            return new SmeStmopa2way<int16_t, int32_t>(machInst, imm_packed, Zn_base, Zm);
+        }
+
         // ------------------------------------------------------------
         // 2) MOVA (vector -> tile, TWO regs) — FEAT_SME2
         //    Must be checked BEFORE the generic MOVA insert/extract routes
@@ -1449,7 +1468,7 @@ namespace Aarch64
 
         constexpr uint32_t base_encoding = 
             (0x40u << 25) | 
-            (0x0u << 24) | 
+            (0x1u << 24) | 
             (0x2u << 21) | 
             (0x4u << 13) | 
             (0x2u << 2); // 0x80408008
@@ -1638,6 +1657,17 @@ namespace Aarch64
         // Bit 4 ('S' bit) is 1, adding 0x10 to the base
         constexpr uint32_t operand_mask = 0xFFA0FC3Cu;
         constexpr uint32_t base_encoding = 0x81000010u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isStmopa2way(uint32_t insn)
+    {
+        // Matches STMOPA (2-way Signed 16-bit sparse to 32-bit, accumulating)
+        // Fixed bits: 
+        // [31:24]=0x80 (u0=0), [23:21]=010, [15:13]=100, [5]=0, [4]=0, [3:2]=10
+        constexpr uint32_t operand_mask = 0xFFE0E03Cu;
+        constexpr uint32_t base_encoding = 0x80408008u;
         return (insn & operand_mask) == base_encoding;
     }
 
