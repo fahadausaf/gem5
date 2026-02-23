@@ -162,6 +162,7 @@ namespace Aarch64
     static inline bool isStmopa2way(uint32_t insn);
     static inline bool isStmopa4way(uint32_t insn);
     static inline bool isSutmopa(uint32_t insn);
+    static inline bool isUstmopa(uint32_t insn);
     
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -918,6 +919,23 @@ namespace Aarch64
             const uint64_t imm_packed = (ZAda & 0x3) | ((i2 & 0x3) << 2) | ((Zk_base & 0x1F) << 4);
 
             return new SmeSutmopa<uint8_t, uint32_t>(machInst, imm_packed, Zn_base, Zm);
+        }
+
+        // Check for USTMOPA (4-way Sparse, Unsigned x Signed)
+        if (Aarch64::isUstmopa(machInst)) {
+            const uint8_t Zm  = bits(machInst, 20, 16);
+            const uint8_t K   = bits(machInst, 12, 12);
+            const uint8_t Zk2 = bits(machInst, 11, 10);
+            const uint8_t Zn4 = bits(machInst, 9, 6);
+            const uint8_t i2  = bits(machInst, 5, 4);
+            const uint8_t ZAda = bits(machInst, 1, 0);
+
+            const RegIndex Zn_base = (RegIndex)(Zn4 << 1);
+            const RegIndex Zk_base = (RegIndex)(20 + (K << 3) + Zk2);
+
+            const uint64_t imm_packed = (ZAda & 0x3) | ((i2 & 0x3) << 2) | ((Zk_base & 0x1F) << 4);
+
+            return new SmeUstmopa<uint8_t, uint32_t>(machInst, imm_packed, Zn_base, Zm);
         }
 
         // ------------------------------------------------------------
@@ -1728,6 +1746,18 @@ namespace Aarch64
         // Notice we use 0x0C in the mask to safely ignore the i2 index at [5:4]!
         constexpr uint32_t operand_mask = 0xFFE0E00Cu;
         constexpr uint32_t base_encoding = 0x80608000u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isUstmopa(uint32_t insn)
+    {
+        // Matches USTMOPA (4-way Unsigned x Signed 8-bit sparse to 32-bit, accumulating)
+        // Fixed bits: 
+        // [31:25]=1000000, [24]=1 (u0=1), [23:22]=01, [21]=0 (u1=0), [15:13]=100, [3:2]=00
+        // Mask uses 0x0C to correctly permit dynamic i2 index selection at bits [5:4]
+        constexpr uint32_t operand_mask = 0xFFE0E00Cu;
+        constexpr uint32_t base_encoding = 0x81408000u;
         return (insn & operand_mask) == base_encoding;
     }
 
