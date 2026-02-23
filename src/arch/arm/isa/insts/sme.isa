@@ -5053,6 +5053,85 @@ let {{
     # STMOPA 2-way 
     smeFmop4aInst('stmopa2way', 'Stmopa2way', 'MatrixOPOp', ['int16_t, int32_t'], stmopa2wayCode)
 
+    stmopa4wayCode = r'''
+        const uint8_t da = imm & 0x3;
+        const uint8_t index = (imm >> 2) & 0x3;
+        const uint8_t zk_idx = (imm >> 4) & 0x1F;
+
+        auto tile = getTile<TPDElem>(ZA, da);
+        const int dim = eCount;
+
+        DPRINTF(Arm, "SmeStmopa4way: da=%u index=%u zk=z%u dim=%d Zn1=z%u Zn2=z%u Zm=z%u\n",
+                da, index, zk_idx, dim, (unsigned)this->op1, (unsigned)(this->op1 + 1), (unsigned)this->op2);
+
+        ArmISA::VecRegContainer zn1, zn2, zm, zk;
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op1], &zn1);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op1 + 1], &zn2);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[this->op2], &zm);
+        xc->tcBase()->getReg(ArmISA::vecRegClass[zk_idx], &zk);
+
+        const TPSElem *zn1_ptr = zn1.as<TPSElem>();
+        const TPSElem *zn2_ptr = zn2.as<TPSElem>();
+        const TPSElem *zm_ptr  = zm.as<TPSElem>();
+        const uint8_t *zk_ptr  = zk.as<uint8_t>();
+
+        // 4-Way Sparse Outer Product Execution
+        for (int col = 0; col < dim; ++col) {
+            
+            // 8-bit control read
+            int byte_offset = index * dim + col;
+            uint8_t ctrl_8bit = zk_ptr[byte_offset];
+
+            TPDElem ecol[4];
+            ecol[0] = static_cast<TPDElem>(zm_ptr[4 * col + 0]);
+            ecol[1] = static_cast<TPDElem>(zm_ptr[4 * col + 1]);
+            ecol[2] = static_cast<TPDElem>(zm_ptr[4 * col + 2]);
+            ecol[3] = static_cast<TPDElem>(zm_ptr[4 * col + 3]);
+
+            for (int row = 0; row < dim; ++row) {
+                
+                TPDElem erow[4] = {0, 0, 0, 0};
+                int active1 = 0;
+                int active2 = 0;
+
+                // Scan Zn1
+                for (int e = 0; e < 4; ++e) {
+                    if (active1 < 2 && (ctrl_8bit & (1 << e))) {
+                        erow[active1++] = static_cast<TPDElem>(zn1_ptr[4 * row + e]);
+                    }
+                }
+                
+                // Scan Zn2
+                for (int e = 0; e < 4; ++e) {
+                    if (active2 < 2 && (ctrl_8bit & (1 << (e + 4)))) {
+                        erow[2 + active2++] = static_cast<TPDElem>(zn2_ptr[4 * row + e]);
+                    }
+                }
+
+                TPDElem sum = tile[row][col];
+                sum += (erow[0] * ecol[0]);
+                sum += (erow[1] * ecol[1]);
+                sum += (erow[2] * ecol[2]);
+                sum += (erow[3] * ecol[3]);
+                tile[row][col] = sum;
+
+                if ((row == 0       && col == 0)       ||
+                    (row == 0       && col == dim - 1) ||
+                    (row == dim - 1 && col == 0)       ||
+                    (row == dim - 1 && col == dim - 1)) {
+                    DPRINTF(Arm, "SmeStmopa4way[%d][%d] ctrl=0x%x erow={%d,%d,%d,%d} ecol={%d,%d,%d,%d} NewZA=%d\n",
+                            row, col, ctrl_8bit, 
+                            (int)erow[0], (int)erow[1], (int)erow[2], (int)erow[3],
+                            (int)ecol[0], (int)ecol[1], (int)ecol[2], (int)ecol[3],
+                            (int)tile[row][col]);
+                }
+            }
+        }
+    '''
+
+    # STMOPA 4-way
+    smeFmop4aInst('stmopa4way', 'Stmopa4way', 'MatrixOPOp', ['int8_t, int32_t'], stmopa4wayCode)
+
 
     # SMSTART
     smstartSmstopCode = '''
