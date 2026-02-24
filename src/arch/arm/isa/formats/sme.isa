@@ -172,6 +172,7 @@ namespace Aarch64
     static inline bool isMovaVecToArray2reg(uint32_t insn);
     static inline bool isMovaVecToTile4reg(uint32_t insn);
     static inline bool isMovazArrayToVec4reg(uint32_t insn);
+    static inline bool isMovazArrayToVec2reg(uint32_t insn);
     
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -389,6 +390,23 @@ namespace Aarch64
 
             // Reuse the safe base class
             return new SmeMovazArrayToVec4Regs(machInst, imm_packed, 0, Rs);
+        }
+
+        // Check for MOVAZ Array To Vector 2-reg 
+        if (Aarch64::isMovazArrayToVec2reg(machInst)) {
+            const uint8_t Rv = bits(machInst, 14, 13);
+            const uint8_t off3 = bits(machInst, 7, 5);
+            const uint8_t Zd_group = bits(machInst, 4, 1); // 4-bit group
+
+            // Rv maps to general purpose index registers W8-W11
+            const uint8_t Rs = 8 + Rv; 
+
+            // Pack the offset and destination group into our immediate
+            // Zd_group is 4 bits, so shift off3 by 4
+            const uint32_t imm_packed = (Zd_group & 0xF) | ((off3 & 0x7) << 4);
+
+            // Reuse the safe base class
+            return new SmeMovazArrayToVec2Regs(machInst, imm_packed, 0, Rs);
         }
         
         const uint32_t insn = (uint32_t)machInst;
@@ -2040,6 +2058,15 @@ namespace Aarch64
         // Fixed bits: [31:24]=0xC0, [23:15]=0x00C, [12:8]=0x0E, [1:0]=00
         constexpr uint32_t operand_mask = 0xFFFF9F03u;
         constexpr uint32_t base_encoding = 0xC0060E00u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool 
+    isMovazArrayToVec2reg(uint32_t insn) {
+        // Matches MOVAZ (array to vector, two registers)
+        // Fixed bits: [31:24]=0xC0, [23:15]=0x00C, [12:8]=0x0A, [0]=0
+        constexpr uint32_t operand_mask = 0xFFFF9F01u;
+        constexpr uint32_t base_encoding = 0xC0060A00u;
         return (insn & operand_mask) == base_encoding;
     }
 
