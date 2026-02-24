@@ -607,6 +607,76 @@ let {{
         header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
         exec_output   += SmeExecute.subst(iop)
 
+    def smeMovaArrayToVec4RegsInst(name, Name, opClass):
+        global header_output, decoder_output, exec_output
+        code = smEnCheckCode + r'''
+            const uint32_t zd_group = imm & 0x7;
+            const uint32_t off3     = (imm >> 3) & 0x7;
+
+            // VL DIV 8 gives us the total number of vectors (equal to SVL in bytes)
+            const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+            const uint32_t vectors  = VL_bytes; 
+            
+            // Stride is vectors DIV 4
+            const uint32_t vstride  = vectors / 4; 
+
+            // Read vector select register W8-W11 (mapped to WOp2 by base class)
+            const uint32_t vbase = (uint32_t)WOp2;
+            
+            // Initial vector calculation
+            uint32_t vec = (vbase + off3) % vstride;
+
+            // Calculate the 4 sequential destination Z registers
+            const uint32_t z0_idx = (zd_group << 2) + 0u;
+            const uint32_t z1_idx = (zd_group << 2) + 1u;
+            const uint32_t z2_idx = (zd_group << 2) + 2u;
+            const uint32_t z3_idx = (zd_group << 2) + 3u;
+
+            ArmISA::VecRegContainer z0, z1, z2, z3;
+
+            // Helper to extract a 1D vector from the ZA array
+            auto readZAVector = [&](uint32_t v_idx, ArmISA::VecRegContainer &zdest) {
+                uint8_t *zb = zdest.as<uint8_t>();
+                // The entire ZA array acts identically to tile ZA0 when queried purely horizontally
+                auto row = getTileHSlice<uint8_t>(ZA, 0, v_idx);
+                for (uint32_t i = 0; i < VL_bytes; ++i) {
+                    zb[i] = row[i];
+                }
+            };
+
+            // Extract the 4 vectors separated by vstride
+            uint32_t vec0 = vec;
+            readZAVector(vec0, z0);
+            
+            uint32_t vec1 = vec0 + vstride;
+            readZAVector(vec1, z1);
+            
+            uint32_t vec2 = vec1 + vstride;
+            readZAVector(vec2, z2);
+            
+            uint32_t vec3 = vec2 + vstride;
+            readZAVector(vec3, z3);
+
+            DPRINTF(Arm, "SmeMovaArrayToVec4Regs: WOp2(idx)=%u offset=%u -> vectors={%u,%u,%u,%u} | Moving to Z%u-Z%u\n",
+                    vbase, off3, vec0, vec1, vec2, vec3, z0_idx, z3_idx);
+
+            // Write directly to architectural state
+            xc->tcBase()->setReg(ArmISA::vecRegClass[z0_idx], &z0);
+            xc->tcBase()->setReg(ArmISA::vecRegClass[z1_idx], &z1);
+            xc->tcBase()->setReg(ArmISA::vecRegClass[z2_idx], &z2);
+            xc->tcBase()->setReg(ArmISA::vecRegClass[z3_idx], &z3);
+        '''
+
+        iop = InstObjParams(
+            name,
+            "Sme" + Name,
+            "SmeMovaVecToTile2RegsOp", 
+            {'code': code, 'op_class': opClass},
+            ['IsNonSpeculative']
+        )
+
+        header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
+        exec_output   += SmeExecute.subst(iop)
 
     def smeCvtMvInst(name, Name, opClass, custom_code=None):
         global header_output, decoder_output, exec_output
@@ -2169,6 +2239,9 @@ let {{
 
     # MOVA (tile to vector, four registers)
     smeMovaTileToVec4RegsInst("mova", "MovaTileToVec4Regs", "MatrixMovOp")
+
+    # MOVA (array to vector, four registers)
+    smeMovaArrayToVec4RegsInst("mova_arr", "MovaArrayToVec4Regs", "MatrixMovOp")
 
 
     # UCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
