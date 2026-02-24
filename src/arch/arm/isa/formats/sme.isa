@@ -165,7 +165,8 @@ namespace Aarch64
     static inline bool isUstmopa(uint32_t insn);
 
     static inline bool isMovaTileToVec2reg(uint32_t insn);
-    static inline bool isMovaTileToVec4Reg(uint32_t insn);
+    static inline bool isMovaTileToVec4reg(uint32_t insn);
+    
     
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -227,6 +228,45 @@ namespace Aarch64
                                         
             // The base class SmeMovaVecToTile2RegsOp expects (machInst, imm, v, Rs)
             return new SmeMovaTileToVec2Regs(machInst, imm_packed, V, Rs);
+        }
+
+        if (Aarch64::isMovaTileToVec4reg(machInst)) {
+            const uint8_t size = bits(machInst, 23, 22);
+            const uint8_t V    = bits(machInst, 15, 15);
+            const uint8_t Rs   = bits(machInst, 14, 13);
+            const uint8_t Zd_group = bits(machInst, 4, 2); // 4-reg group
+            
+            uint8_t ZAn_raw = 0;
+            uint8_t off_raw = 0;
+            
+            // Parse size-dependent fields
+            switch (size) {
+                case 0: // 8-bit
+                    ZAn_raw = 0; 
+                    off_raw = bits(machInst, 6, 5); 
+                    break;
+                case 1: // 16-bit
+                    ZAn_raw = bits(machInst, 7, 7);
+                    off_raw = bits(machInst, 6, 6);
+                    break;
+                case 2: // 32-bit
+                    ZAn_raw = bits(machInst, 7, 7);
+                    off_raw = 0;
+                    break;
+                case 3: // 64-bit
+                    ZAn_raw = bits(machInst, 7, 7);
+                    off_raw = 0; 
+                    break;
+            }
+            
+            // Pack immediate exactly as expected by insts/sme.isa
+            const uint32_t imm_packed = (ZAn_raw & 0x7) | 
+                                        ((Zd_group & 0x1F) << 3) | 
+                                        ((off_raw & 0x7) << 8) | 
+                                        ((size & 0x3) << 11);
+                                        
+            // Reuses the identical base parsing class as the 2-reg variant!
+            return new SmeMovaTileToVec4Regs(machInst, imm_packed, V, Rs);
         }
         
         const uint32_t insn = (uint32_t)machInst;
@@ -1812,6 +1852,17 @@ namespace Aarch64
         // Matches MOVA (tile to vector, two registers)
         constexpr uint32_t operand_mask = 0xFF3F1C01u;
         constexpr uint32_t base_encoding = 0xC0060000u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool
+    isMovaTileToVec4reg(uint32_t insn)
+    {
+        // Matches MOVA (tile to vector, four registers)
+        // Fixed bits: 
+        // [31:24]=0xC0, [21:16]=0x06, [12:10]=001, [1:0]=00
+        constexpr uint32_t operand_mask = 0xFF3F1C03u;
+        constexpr uint32_t base_encoding = 0xC0060400u;
         return (insn & operand_mask) == base_encoding;
     }
 
