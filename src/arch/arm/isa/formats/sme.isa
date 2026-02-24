@@ -170,6 +170,7 @@ namespace Aarch64
     static inline bool isMovaArrayToVec2reg(uint32_t insn);
     static inline bool isMovaVecToArray4reg(uint32_t insn);
     static inline bool isMovaVecToArray2reg(uint32_t insn);
+    static inline bool isMovaVecToTile4reg(uint32_t insn);
     
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -332,6 +333,45 @@ namespace Aarch64
 
             // Reuse your safe base class
             return new SmeMovaVecToArray2Regs(machInst, imm_packed, 0, Rs);
+        }
+
+        if (Aarch64::isMovaVecToTile4reg(machInst)) {
+            const uint8_t size = bits(machInst, 23, 22);
+            const uint8_t V    = bits(machInst, 15, 15);
+            const uint8_t Rs   = bits(machInst, 14, 13);
+            const uint8_t Zn_group = bits(machInst, 7, 5); // Source vector group
+            
+            uint8_t ZAd_raw = 0;
+            uint8_t off_raw = 0;
+            
+            // Parse size-dependent fields
+            switch (size) {
+                case 0: // 8-bit
+                    ZAd_raw = 0; 
+                    off_raw = bits(machInst, 1, 0); // off2
+                    break;
+                case 1: // 16-bit
+                    ZAd_raw = bits(machInst, 1, 1);
+                    off_raw = bits(machInst, 0, 0); // o1
+                    break;
+                case 2: // 32-bit
+                    ZAd_raw = bits(machInst, 1, 0);
+                    off_raw = 0;
+                    break;
+                case 3: // 64-bit
+                    ZAd_raw = bits(machInst, 2, 0);
+                    off_raw = 0; 
+                    break;
+            }
+            
+            // Pack immediate (reusing the exact format we used for tile-to-vector)
+            const uint32_t imm_packed = (ZAd_raw & 0x7) | 
+                                        ((Zn_group & 0x1F) << 3) | 
+                                        ((off_raw & 0x7) << 8) | 
+                                        ((size & 0x3) << 11);
+                                        
+            // Reuses the identical base parsing class as all our other working instructions!
+            return new SmeMovaVecToTile4Regs(machInst, imm_packed, V, Rs);
         }
         
         const uint32_t insn = (uint32_t)machInst;
@@ -1964,6 +2004,16 @@ namespace Aarch64
         // Fixed bits: [31:24]=0xC0, [23:15]=0x008 (bit 18 is 1), [12:8]=0x08, [3]=0
         constexpr uint32_t operand_mask = 0xFFFF9F08u;
         constexpr uint32_t base_encoding = 0xC0040800u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool 
+    isMovaVecToTile4reg(uint32_t insn) {
+        // Matches MOVA (vector to tile, four registers)
+        // Fixed bits: [31:24]=0xC0, [21:17]=00001, [16]=0, [12:10]=001, [9:8]=00
+        // Masking [4:3]=00 covers fixed 0s across all size variants safely.
+        constexpr uint32_t operand_mask = 0xFF3F1F18u;
+        constexpr uint32_t base_encoding = 0xC0020400u;
         return (insn & operand_mask) == base_encoding;
     }
 
