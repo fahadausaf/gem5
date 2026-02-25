@@ -174,6 +174,7 @@ namespace Aarch64
     static inline bool isMovazArrayToVec4reg(uint32_t insn);
     static inline bool isMovazArrayToVec2reg(uint32_t insn);
     static inline bool isMovazTileToVec4reg(uint32_t insn);
+    static inline bool isMovazTileToVec2reg(uint32_t insn);
     
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -196,6 +197,46 @@ namespace Aarch64
     {
         // Starting point for decoding: bits 31:25=1xx0000
 
+        // Check for MOVAZ Tile To Vector 2-reg
+        if (Aarch64::isMovazTileToVec2reg(machInst)) {
+            const uint8_t size = bits(machInst, 23, 22);
+            const uint8_t V    = bits(machInst, 15, 15);
+            const uint8_t Rs   = bits(machInst, 14, 13);
+            const uint8_t Zd_group = bits(machInst, 4, 1); // 4-bit group
+            
+            uint8_t ZAn_raw = 0;
+            uint8_t off_raw = 0;
+            
+            // Parse size-dependent fields
+            switch (size) {
+                case 0: // 8-bit
+                    ZAn_raw = 0; 
+                    off_raw = bits(machInst, 7, 5); // off3 spans [7:5]
+                    break;
+                case 1: // 16-bit
+                    ZAn_raw = bits(machInst, 7, 7);
+                    off_raw = bits(machInst, 6, 5); // off2 spans [6:5]
+                    break;
+                case 2: // 32-bit
+                    ZAn_raw = bits(machInst, 7, 6);
+                    off_raw = bits(machInst, 5, 5); // o1 spans [5]
+                    break;
+                case 3: // 64-bit
+                    ZAn_raw = bits(machInst, 7, 5);
+                    off_raw = 0; 
+                    break;
+            }
+            
+            // Pack immediate exactly as expected by insts/sme.isa
+            // Zd_group is 4 bits, fitting safely into the 0x1F mask allocation
+            const uint32_t imm_packed = (ZAn_raw & 0x7) | 
+                                        ((Zd_group & 0x1F) << 3) | 
+                                        ((off_raw & 0x7) << 8) | 
+                                        ((size & 0x3) << 11);
+                                        
+            return new SmeMovazTileToVec2Regs(machInst, imm_packed, V, Rs);
+        }
+        
         // Check for MOVA (tile to vector, 2-reg)
         if (Aarch64::isMovaTileToVec2reg(machInst)) {
             const uint8_t size = bits(machInst, 23, 22);
@@ -2043,6 +2084,16 @@ namespace Aarch64
         // STRICT MASK: [12:8] is strictly checked against 0x06 (00110)
         constexpr uint32_t operand_mask = 0xFF3F1F03u;
         constexpr uint32_t base_encoding = 0xC0060600u;
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool 
+    isMovazTileToVec2reg(uint32_t insn) {
+        // Matches MOVAZ (tile to vector, two registers)
+        // STRICT MASK: [12:8] must be exactly 00010 (0x02) to verify 2-reg + MOVAZ
+        // Fixed bits: [31:24]=0xC0, [21:17]=00011, [16]=0, [12:10]=000, [9:8]=10, [0]=0
+        constexpr uint32_t operand_mask = 0xFF3F1F01u; 
+        constexpr uint32_t base_encoding = 0xC0060200u;
         return (insn & operand_mask) == base_encoding;
     }
     
