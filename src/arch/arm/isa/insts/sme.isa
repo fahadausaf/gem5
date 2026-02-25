@@ -1398,6 +1398,46 @@ let {{
 
         header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
         exec_output   += SmeExecute.subst(iop)
+    
+    def smeMovtScalarToTableInst(name, Name, opClass):
+        global header_output, exec_output # decoder_output is automatically handled by the template!
+        
+        code = smEnCheckCode + r'''
+            // Map the constructor arguments back to our instruction parameters
+            const uint32_t offset = imm;
+            const uint8_t rt = (uint8_t)op2;
+
+            // Bypassing StaticInst operands for the integer register to avoid complex pipeline dependencies.
+            // We read the 64-bit scalar directly from the ThreadContext using the integer register class.
+            uint64_t scalar = xc->tcBase()->getReg(ArmISA::intRegClass[rt]); 
+
+            // Access ZT0 (mapped to matRegClass index 1)
+            ArmISA::VecRegContainer zt0;
+            xc->tcBase()->getReg(ArmISA::matRegClass[1], &zt0);
+            
+            uint64_t *zt0_ptr = zt0.as<uint64_t>();
+            
+            // Move the 8-byte payload into the specified ZT0 offset
+            zt0_ptr[offset] = scalar;
+
+            // Write ZT0 back to the context
+            xc->tcBase()->setReg(ArmISA::matRegClass[1], &zt0);
+
+            DPRINTF(Arm, "SmeMovtScalarToTable: Moved X%u (0x%lx) to ZT0 segment %u\n",
+                    rt, scalar, offset);
+        '''
+
+        iop = InstObjParams(
+            name,
+            "Sme" + Name,
+            "SmeMovaVecToTile2RegsOp", # Inherit from the proven base class!
+            {'code': code, 'op_class': opClass},
+            ['IsNonSpeculative']
+        )
+
+        # Use the exact templates that flawlessly compiled and ran MOVAZ!
+        header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
+        exec_output   += SmeExecute.subst(iop)
 
     def smeCvtMvInst(name, Name, opClass, custom_code=None):
         global header_output, decoder_output, exec_output
@@ -2990,6 +3030,9 @@ let {{
 
     # MOVAZ (tile to vector, single register)
     smeMovazTileToVec1RegInst("movaz_tile2vec_1reg", "MovazTileToVec1Reg", "MatrixMovOp")
+
+    # Trigger the generator
+    smeMovtScalarToTableInst("movt_scalar2table", "MovtScalarToTable", "IntAluOp")
 
     # UCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
     ucvtfCode = r'''

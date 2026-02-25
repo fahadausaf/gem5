@@ -279,6 +279,20 @@ class SmeCvtMvOp : public ArmStaticInst
             Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
+class SmeMovtScalarToTableOp : public ArmStaticInst {
+  protected:
+    uint32_t imm;
+    uint8_t rt;
+
+  public:
+    SmeMovtScalarToTableOp(const char *mnem, ExtMachInst machInst, OpClass __opClass, uint32_t _imm, uint8_t _rt)
+        : ArmStaticInst(mnem, machInst, __opClass), imm(_imm), rt(_rt)
+    {
+        // Add Rt as a source operand so the pipeline fetches it before execution
+        setSrcRegIdx(0, intRegClass[_rt]); 
+    }
+};
+
 
 
 } // namespace ArmISA
