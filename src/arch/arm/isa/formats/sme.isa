@@ -177,7 +177,8 @@ namespace Aarch64
     static inline bool isMovazTileToVec2reg(uint32_t insn);
     static inline bool isMovazTileToVec(uint32_t insn);
     static inline bool isMovtScalarToTable(uint32_t insn);
-    
+    static inline bool isMovtTableToScalar(uint32_t insn);
+
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
     // NOTE: This is called from a different decode tree (aarch64.isa).
@@ -245,6 +246,14 @@ namespace Aarch64
             const uint8_t Rt   = bits(machInst, 4, 0);   // General-purpose source register
 
             return new SmeMovtScalarToTable(machInst, off3, Rt, false);
+        }
+
+        // Check for MOVT Table to Scalar
+        if (Aarch64::isMovtTableToScalar(machInst)) {
+            const uint8_t off3 = bits(machInst, 14, 12); // Extract offset
+            const uint8_t Rt   = bits(machInst, 4, 0);   // Extract destination register
+
+            return new SmeMovtTableToScalar(machInst, off3, Rt, false);
         }
 
         // Check for MOVAZ Tile To Vector 1-reg
@@ -2147,6 +2156,14 @@ namespace Aarch64
         // Fixed bits: [31:24]=0xC0, [23:16]=0x4E, [15]=0, [11:5]=0x1F
         constexpr uint32_t operand_mask = 0xFFFF8FE0u; 
         constexpr uint32_t base_encoding = 0xC04E03E0u; 
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool 
+    isMovtTableToScalar(uint32_t insn) {
+        // Matches MOVT (table to scalar)
+        constexpr uint32_t operand_mask = 0xFFFF8FE0u; 
+        constexpr uint32_t base_encoding = 0xC04C03E0u; 
         return (insn & operand_mask) == base_encoding;
     }
 

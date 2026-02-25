@@ -1403,36 +1403,52 @@ let {{
         global header_output, exec_output 
         
         code = smEnCheckCode + r'''
-            // Map the constructor arguments back to our instruction parameters
             const uint32_t offset = imm;
             const uint8_t rt = (uint8_t)op2;
 
-            // Safely extract the 64-bit scalar directly from the integer register file
+            // Extract the 64-bit scalar
             uint64_t scalar = xc->tcBase()->getReg(ArmISA::intRegClass[rt]); 
-
-            // =======================================================================
-            // SME2 ZT0 PROTOTYPING STORE
-            // Since matRegClass[1] is out-of-bounds in your gem5 build, we use a 
-            // persistent static array to emulate the 512-bit (64-byte) ZT0 table.
-            // This allows Scalar-to-Table and Table-to-Scalar round trips to work flawlessly!
-            // =======================================================================
-            static uint64_t emulated_ZT0[8] = {0};
             
-            // Move the 8-byte payload into the specified ZT0 offset
-            emulated_ZT0[offset] = scalar;
+            // Push to our globally shared ZT0 table prototype
+            emulated_ZT0_table[offset] = scalar;
 
             DPRINTF(Arm, "SmeMovtScalarToTable: Moved X%u (0x%lx) to ZT0 segment %u\n",
                     rt, scalar, offset);
         '''
 
-        iop = InstObjParams(
-            name,
-            "Sme" + Name,
-            "SmeMovaVecToTile2RegsOp", # Keep inheriting from the proven base class!
-            {'code': code, 'op_class': opClass},
-            ['IsNonSpeculative']
-        )
+        iop = InstObjParams(name, "Sme" + Name, "SmeMovaVecToTile2RegsOp", {'code': code, 'op_class': opClass}, ['IsNonSpeculative'])
 
+        # Inject the shared ZT0 memory state into the decoder header
+        header_output += '''
+            #ifndef EMULATED_ZT0_DEFINED
+            #define EMULATED_ZT0_DEFINED
+            // C++17 inline variable guarantees a single shared 512-bit ZT0 instance
+            inline uint64_t emulated_ZT0_table[8] = {0};
+            #endif
+        '''
+        
+        header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
+        exec_output   += SmeExecute.subst(iop)
+
+
+    def smeMovtTableToScalarInst(name, Name, opClass):
+        global header_output, exec_output 
+        
+        code = smEnCheckCode + r'''
+            const uint32_t offset = imm;
+            const uint8_t rt = (uint8_t)op2;
+
+            // Extract the 8-byte payload from our shared ZT0 table prototype
+            uint64_t scalar = emulated_ZT0_table[offset];
+
+            // Write the payload directly into the destination general-purpose register
+            xc->tcBase()->setReg(ArmISA::intRegClass[rt], scalar);
+
+            DPRINTF(Arm, "SmeMovtTableToScalar: Read ZT0 segment %u (0x%lx) -> Wrote to X%u\n",
+                    offset, scalar, rt);
+        '''
+
+        iop = InstObjParams(name, "Sme" + Name, "SmeMovaVecToTile2RegsOp", {'code': code, 'op_class': opClass}, ['IsNonSpeculative'])
         header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
         exec_output   += SmeExecute.subst(iop)
 
@@ -3028,8 +3044,11 @@ let {{
     # MOVAZ (tile to vector, single register)
     smeMovazTileToVec1RegInst("movaz_tile2vec_1reg", "MovazTileToVec1Reg", "MatrixMovOp")
 
-    # Trigger the generator
+    # MOVT Scalar to Table
     smeMovtScalarToTableInst("movt_scalar2table", "MovtScalarToTable", "IntAluOp")
+
+    # MOVT Table to Scalar
+    smeMovtTableToScalarInst("movt_table2scalar", "MovtTableToScalar", "IntAluOp")
 
     # UCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
     ucvtfCode = r'''
