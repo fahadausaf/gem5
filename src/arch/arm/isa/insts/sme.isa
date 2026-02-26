@@ -1452,6 +1452,155 @@ let {{
         header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
         exec_output   += SmeExecute.subst(iop)
 
+    def smeMovtVecToTableInst(name, Name, opClass):
+        global header_output, exec_output 
+        
+        code = smEnCheckCode + r'''
+            const uint32_t imm = this->imm; // off2 immediate
+            const uint8_t zt_idx = (uint8_t)op2;
+
+            // 1. Calculate Vector Length and chunk sizes
+            const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+            const uint32_t tsize_bytes = (VL_bytes <= 64) ? VL_bytes : 64; 
+            
+            const uint32_t max_chunks = 64 / tsize_bytes; // 512 DIV tsize
+            const uint32_t chunk_offset = imm % max_chunks;
+            const uint32_t byte_offset = chunk_offset * tsize_bytes;
+
+            // 2. Read the source Z vector safely via ThreadContext
+            ArmISA::VecRegContainer z_reg;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zt_idx], &z_reg);
+            const uint8_t *zt_ptr = z_reg.as<uint8_t>();
+
+            // 3. Architectural Rule: If index is 0, zero the entire 512-bit ZT0 register first
+            if (imm == 0) {
+                for (int i = 0; i < 8; i++) {
+                    emulated_ZT0_table[i] = 0;
+                }
+            }
+
+            // 4. Write the vector data to the shared ZT0 byte array
+            uint8_t *zt0_bytes = (uint8_t *)emulated_ZT0_table;
+            for (uint32_t i = 0; i < tsize_bytes; i++) {
+                zt0_bytes[byte_offset + i] = zt_ptr[i];
+            }
+
+            DPRINTF(Arm, "SmeMovtVecToTable: Read Z%u -> Wrote %u bytes to ZT0 byte offset %u (imm=%u)\n",
+                    zt_idx, tsize_bytes, byte_offset, imm);
+        '''
+
+        iop = InstObjParams(name, "Sme" + Name, "SmeMovaVecToTile2RegsOp", {'code': code, 'op_class': opClass}, ['IsNonSpeculative'])
+        
+        # Inject the shared ZT0 prototype in case this instruction is parsed first
+        header_output += '''
+            #ifndef EMULATED_ZT0_DEFINED
+            #define EMULATED_ZT0_DEFINED
+            inline uint64_t emulated_ZT0_table[8] = {0};
+            #endif
+        '''
+        
+        header_output += SmeMovaVecToTile2RegsDeclare.subst(iop)
+        exec_output   += SmeExecute.subst(iop)
+
+    def smeLuti2Inst(name, Name, opClass):
+        global header_output, decoder_output, exec_output
+        
+        code = r'''
+            // Calculate element sizes and vector elements
+            const uint32_t esize_bits = 8 << size;
+            const uint32_t esize_bytes = esize_bits / 8;
+            
+            const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+            const uint32_t elements = VL_bytes / esize_bytes;
+            
+            // Calculate the vector segment
+            const uint32_t segments = esize_bits / 8; 
+            const uint32_t segment = i2 % segments;
+            
+            // Safely fetch source vector Zn using ThreadContext directly
+            ArmISA::VecRegContainer zn_cont;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[zn], &zn_cont);
+            const uint8_t* zn_ptr = zn_cont.as<uint8_t>();
+            
+            // Initialize destination arrays for the 4 target registers
+            ArmISA::VecRegContainer zd_cont[4];
+            uint8_t* zd_ptr[4];
+            for (int r = 0; r < 4; r++) {
+                xc->tcBase()->getReg(ArmISA::vecRegClass[d + r * dstride], &zd_cont[r]);
+                zd_ptr[r] = zd_cont[r].as<uint8_t>();
+            }
+            
+            // The table is accessed as an array of 32-bit elements
+            uint32_t* table_32 = (uint32_t*)emulated_ZT0_table;
+            
+            // Perform the lookup across all 4 destinations
+            for (int r = 0; r < 4; r++) {
+                uint32_t base = (segment * 4 + r) * elements;
+                for (uint32_t e = 0; e < elements; e++) {
+                    
+                    // Extract the 2-bit index from the packed Zn source
+                    uint32_t bit_pos = (base + e) * 2;
+                    uint32_t byte_idx = bit_pos / 8;
+                    uint32_t bit_offset = bit_pos % 8;
+                    uint8_t index = (zn_ptr[byte_idx] >> bit_offset) & 0x3;
+                    
+                    // Lookup from ZT0 and mask to target esize
+                    uint32_t result = table_32[index];
+                    
+                    // Write into destination vector
+                    if (esize_bits == 8) {
+                        zd_ptr[r][e] = (uint8_t)(result & 0xFF);
+                    } else if (esize_bits == 16) {
+                        ((uint16_t*)zd_ptr[r])[e] = (uint16_t)(result & 0xFFFF);
+                    } else {
+                        ((uint32_t*)zd_ptr[r])[e] = result;
+                    }
+                }
+            }
+            
+            // Write the 4 vectors back to the hardware
+            for (int r = 0; r < 4; r++) {
+                xc->tcBase()->setReg(ArmISA::vecRegClass[d + r * dstride], &zd_cont[r]);
+            }
+            
+            DPRINTF(Arm, "SmeLuti2: Zn=%u -> Z{%u, %u, %u, %u} (esize=%u)\n",
+                    zn, d, d+dstride, d+2*dstride, d+3*dstride, esize_bits);
+        '''
+        
+        iop = InstObjParams(name, "Sme" + Name, "ArmStaticInst", {'code': code, 'op_class': opClass}, ['IsNonSpeculative'])
+        
+        header_output += '''
+            #ifndef EMULATED_ZT0_DEFINED
+            #define EMULATED_ZT0_DEFINED
+            inline uint64_t emulated_ZT0_table[8] = {0};
+            #endif
+        '''
+        
+        header_output += (
+            "class Sme" + Name + " : public ArmStaticInst\n" +
+            "{\n" +
+            "  protected:\n" +
+            "    uint8_t size;\n" +
+            "    uint8_t i2;\n" +
+            "    uint8_t zn;\n" +
+            "    uint8_t d;\n" +
+            "    uint8_t dstride;\n" +
+            "  public:\n" +
+            "    Sme" + Name + "(ExtMachInst machInst, uint8_t _size, uint8_t _i2, uint8_t _zn, uint8_t _d, uint8_t _dstride);\n" +
+            "    Fault execute(ExecContext *, trace::InstRecord *) const override;\n" +
+            "};\n"
+        )
+        
+        # Empty constructor prevents gem5 from attempting to dynamically allocate unsupported vector array lengths
+        decoder_output += (
+            "inline Sme" + Name + "::Sme" + Name + "(ExtMachInst machInst, uint8_t _size, uint8_t _i2, uint8_t _zn, uint8_t _d, uint8_t _dstride)\n" +
+            "    : ArmStaticInst(\"" + name + "\", machInst, " + opClass + "), size(_size), i2(_i2), zn(_zn), d(_d), dstride(_dstride)\n" +
+            "{\n" +
+            "}\n"
+        )
+        
+        exec_output += SmeExecute.subst(iop)
+
     def smeCvtMvInst(name, Name, opClass, custom_code=None):
         global header_output, decoder_output, exec_output
 
@@ -3049,6 +3198,12 @@ let {{
 
     # MOVT Table to Scalar
     smeMovtTableToScalarInst("movt_table2scalar", "MovtTableToScalar", "IntAluOp")
+
+    # MOVT Vector to Table
+    smeMovtVecToTableInst("movt_vec2table", "MovtVecToTable", "MatrixMovOp")
+
+    # LUTI2 (four registers)
+    smeLuti2Inst("luti2_4reg", "Luti2", "MatrixMovOp")
 
     # UCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
     ucvtfCode = r'''

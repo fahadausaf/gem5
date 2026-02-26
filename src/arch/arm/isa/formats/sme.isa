@@ -178,6 +178,10 @@ namespace Aarch64
     static inline bool isMovazTileToVec(uint32_t insn);
     static inline bool isMovtScalarToTable(uint32_t insn);
     static inline bool isMovtTableToScalar(uint32_t insn);
+    static inline bool isMovtVecToTable(uint32_t insn);
+
+    static inline bool isLuti2Consecutive(uint32_t insn);
+    
 
 
     StaticInstPtr decodeSmeMovaVecToTile2Regs(ExtMachInst);
@@ -254,6 +258,15 @@ namespace Aarch64
             const uint8_t Rt   = bits(machInst, 4, 0);   // Extract destination register
 
             return new SmeMovtTableToScalar(machInst, off3, Rt, false);
+        }
+
+        // Check for MOVT vector to Table
+        if (Aarch64::isMovtVecToTable(machInst)) {
+            const uint8_t off2 = bits(machInst, 14, 13); // Extract the 2-bit offset index
+            const uint8_t Zt   = bits(machInst, 4, 0);   // Extract the source vector register
+
+            // We pass 'false' for v, leveraging the exact same foolproof constructor
+            return new SmeMovtVecToTable(machInst, off2, Zt, false);
         }
 
         // Check for MOVAZ Tile To Vector 1-reg
@@ -541,6 +554,35 @@ namespace Aarch64
 
             // Reuse the safe base class
             return new SmeMovazArrayToVec2Regs(machInst, imm_packed, 0, Rs);
+        }
+
+        // Check for LUTI2 (four registers), both consecutive and strided
+        // Mask: 0xFFFFCCC0u checks the primary opcode identifiers
+        bool is_luti2_four_regs_consecutive = ((machInst & 0xFFFFCCC0u) == 0xC08C0000u); // Bit 21 is 0
+        bool is_luti2_four_regs_strided     = ((machInst & 0xFFFFCCC0u) == 0xC0AC0000u); // Bit 21 is 1
+        
+        if (is_luti2_four_regs_consecutive || is_luti2_four_regs_strided) {
+            const uint8_t size = bits(machInst, 13, 12); 
+            const uint8_t i2   = bits(machInst, 17, 16); 
+            const uint8_t Zn   = bits(machInst, 9, 5);   
+            
+            // Architecturally UNDEFINED size checks
+            if (is_luti2_four_regs_consecutive && size == 3) return new Unknown64(machInst);
+            if (is_luti2_four_regs_strided && size >= 2)     return new Unknown64(machInst);
+            
+            uint8_t d, dstride;
+            if (is_luti2_four_regs_consecutive) {
+                uint8_t Zd = bits(machInst, 4, 1);
+                d = Zd * 4;  // Registers are grouped sequentially (e.g., Z0, Z1, Z2, Z3)
+                dstride = 1; 
+            } else {
+                uint8_t D = bits(machInst, 4, 4);
+                uint8_t Zd = bits(machInst, 1, 0);
+                d = (D << 4) | Zd; // Registers are offset by 4 (e.g., Z16, Z20, Z24, Z28)
+                dstride = 4; 
+            }
+            
+            return new SmeLuti2(machInst, size, i2, Zn, d, dstride);
         }
 
         
@@ -2164,6 +2206,15 @@ namespace Aarch64
         // Matches MOVT (table to scalar)
         constexpr uint32_t operand_mask = 0xFFFF8FE0u; 
         constexpr uint32_t base_encoding = 0xC04C03E0u; 
+        return (insn & operand_mask) == base_encoding;
+    }
+
+    static inline bool 
+    isMovtVecToTable(uint32_t insn) {
+        // Matches MOVT (vector to table)
+        // Fixed bits: [31:15]=0xC04E0, [12:5]=0x3F
+        constexpr uint32_t operand_mask  = 0xFFFF9FE0u; 
+        constexpr uint32_t base_encoding = 0xC04E07E0u; 
         return (insn & operand_mask) == base_encoding;
     }
 
