@@ -681,6 +681,50 @@ namespace Aarch64
             return new SmeLuti4EightBit(machInst, Zn_base, d, dstride);
         }
 
+        // Decode LUTI4 (single register)
+        // The mask 0xFFFC4C00u validates bits [31:18], [14], and [11:10]
+        bool is_luti4_single = ((machInst & 0xFFFC4C00u) == 0xC0C80000u); 
+
+        if (is_luti4_single) {
+            const uint8_t size = bits(machInst, 13, 12); // Element size
+            const uint8_t i3   = bits(machInst, 17, 15); // 3-bit segment index
+            const uint8_t Zn   = bits(machInst, 9, 5);   // Source vector
+            const uint8_t Zd   = bits(machInst, 4, 0);   // Destination vector
+            
+            // Architecturally UNDEFINED if size is '11'
+            if (size == 3) return new Unknown64(machInst);
+            
+            return new SmeLuti4Single(machInst, size, i3, Zn, Zd);
+        }
+
+        // Decode LUTI4 (two registers)
+        bool is_luti4_two_regs_consecutive = ((machInst & 0xFFFCCC01u) == 0xC0888000u);
+        bool is_luti4_two_regs_strided     = ((machInst & 0xFFFCCC08u) == 0xC0A88000u);
+
+        if (is_luti4_two_regs_consecutive || is_luti4_two_regs_strided) {
+            const uint8_t size = bits(machInst, 13, 12); // Element size
+            const uint8_t i2   = bits(machInst, 17, 16); // 2-bit segment index
+            const uint8_t Zn   = bits(machInst, 9, 5);   // Source vector
+
+            // Architecturally UNDEFINED size checks
+            if (is_luti4_two_regs_consecutive && size == 3) return new Unknown64(machInst);
+            if (is_luti4_two_regs_strided && (size == 2 || size == 3)) return new Unknown64(machInst);
+
+            uint8_t d, dstride;
+            if (is_luti4_two_regs_consecutive) {
+                uint8_t Zd = bits(machInst, 4, 1);
+                d = Zd * 2;  // d = Zd:'0' (e.g., Z0, Z2, Z4)
+                dstride = 1; 
+            } else {
+                uint8_t D = bits(machInst, 4, 4);
+                uint8_t Zd = bits(machInst, 2, 0);
+                d = (D << 4) | Zd; // d = D:'0':Zd (Maps exactly to Z0-Z7 or Z16-Z23)
+                dstride = 8; // Offset by 8 for the second register (e.g., Z16, Z24)
+            }
+
+            return new SmeLuti4Two(machInst, size, i2, Zn, d, dstride);
+        }
+
         
         
         const uint32_t insn = (uint32_t)machInst;
