@@ -585,6 +585,22 @@ namespace Aarch64
             return new SmeLuti2(machInst, size, i2, Zn, d, dstride);
         }
 
+        // LUTI2 (single register)
+        // The mask 0xFFFC0C00u strictly checks bits [11:10]=00 as required
+        bool is_luti2_single = ((machInst & 0xFFFC0C00u) == 0xC0CC0000u); 
+
+        if (is_luti2_single) {
+            const uint8_t size = bits(machInst, 13, 12); // Element size
+            const uint8_t i4   = bits(machInst, 17, 14); // 4-bit segment index
+            const uint8_t Zn   = bits(machInst, 9, 5);   // Source vector
+            const uint8_t Zd   = bits(machInst, 4, 0);   // Destination vector
+            
+            // Architecturally UNDEFINED if size is '11'
+            if (size == 3) return new Unknown64(machInst);
+            
+            return new SmeLuti2Single(machInst, size, i4, Zn, Zd);
+        }
+
         
         
         const uint32_t insn = (uint32_t)machInst;
