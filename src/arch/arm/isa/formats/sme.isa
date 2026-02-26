@@ -601,6 +601,86 @@ namespace Aarch64
             return new SmeLuti2Single(machInst, size, i4, Zn, Zd);
         }
 
+        // Decode LUTI2 (two registers)
+        bool is_luti2_two_regs_consecutive = ((machInst & 0xFFFC4C01u) == 0xC08C4000u);
+        bool is_luti2_two_regs_strided     = ((machInst & 0xFFFC4C08u) == 0xC0CC4000u);
+
+        if (is_luti2_two_regs_consecutive || is_luti2_two_regs_strided) {
+            const uint8_t size = bits(machInst, 13, 12); 
+            const uint8_t i3   = bits(machInst, 17, 15); // 3-bit segment index
+            const uint8_t Zn   = bits(machInst, 9, 5);   // Source vector 
+
+            // Architecturally UNDEFINED size checks
+            if (is_luti2_two_regs_consecutive && size == 3) return new Unknown64(machInst);
+            if (is_luti2_two_regs_strided && (size == 2 || size == 3)) return new Unknown64(machInst);
+
+            uint8_t d, dstride;
+            if (is_luti2_two_regs_consecutive) {
+                uint8_t Zd = bits(machInst, 4, 1);
+                d = Zd * 2; // Registers are sequential (e.g., Z0, Z1)
+                dstride = 1; 
+            } else {
+                uint8_t D = bits(machInst, 4, 4);
+                uint8_t Zd = bits(machInst, 2, 0);
+                d = (D << 4) | Zd; // Maps to Z0-Z7 or Z16-Z23
+                dstride = 8; // Offset by 8 (e.g., Z16, Z24)
+            }
+
+            return new SmeLuti2Two(machInst, size, i3, Zn, d, dstride);
+        }
+
+        // Decode LUTI4 (four registers)
+        bool is_luti4_four_regs_consecutive = ((machInst & 0xFFFECC03u) == 0xC08A8000u);
+        bool is_luti4_four_regs_strided     = ((machInst & 0xFFFECC0Cu) == 0xC0AA8000u);
+
+        if (is_luti4_four_regs_consecutive || is_luti4_four_regs_strided) {
+            const uint8_t size = bits(machInst, 13, 12); // Element size
+            const uint8_t i1   = bits(machInst, 16, 16); // 1-bit segment index
+            const uint8_t Zn   = bits(machInst, 9, 5);   // Source vector 
+
+            // Architecturally UNDEFINED size checks
+            if (is_luti4_four_regs_consecutive && (size == 0 || size == 3)) return new Unknown64(machInst);
+            if (is_luti4_four_regs_strided && size != 1) return new Unknown64(machInst); // Strided only supports 16-bit (.H)
+
+            uint8_t d, dstride;
+            if (is_luti4_four_regs_consecutive) {
+                uint8_t Zd = bits(machInst, 4, 2);
+                d = Zd * 4;  // Registers are sequentially grouped (e.g., Z0, Z1, Z2, Z3)
+                dstride = 1; 
+            } else {
+                uint8_t D = bits(machInst, 4, 4);
+                uint8_t Zd = bits(machInst, 1, 0);
+                d = (D << 4) | Zd; // Offset by 4 (e.g., Z16, Z20, Z24, Z28)
+                dstride = 4; 
+            }
+
+            return new SmeLuti4(machInst, size, i1, Zn, d, dstride);
+        }
+
+        // Decode LUTI4 (four registers, 8-bit)
+        bool is_luti4_four_regs_8bit_consec = ((machInst & 0xFFFFFC27u) == 0xC08B0000u);
+        bool is_luti4_four_regs_8bit_stride = ((machInst & 0xFFFFFC2Cu) == 0xC0AB0000u);
+
+        if (is_luti4_four_regs_8bit_consec || is_luti4_four_regs_8bit_stride) {
+            // Zn is encoded in bits 9:6, multiplied by 2 to represent the {Zn1, Zn2} pair
+            const uint8_t Zn_base = bits(machInst, 9, 6) << 1; 
+
+            uint8_t d, dstride;
+            if (is_luti4_four_regs_8bit_consec) {
+                uint8_t Zd = bits(machInst, 4, 3);
+                d = Zd << 2;  // d = Zd:'00' (e.g., Z0, Z4, Z8)
+                dstride = 1; 
+            } else {
+                uint8_t D = bits(machInst, 4, 4);
+                uint8_t Zd = bits(machInst, 1, 0);
+                d = (D << 4) | Zd; // d = D:'00':Zd (e.g., Z0-Z3 or Z16-Z19)
+                dstride = 4; 
+            }
+
+            // The mask rigidly enforces size='00', so no UNDEFINED size checks are needed!
+            return new SmeLuti4EightBit(machInst, Zn_base, d, dstride);
+        }
+
         
         
         const uint32_t insn = (uint32_t)machInst;
