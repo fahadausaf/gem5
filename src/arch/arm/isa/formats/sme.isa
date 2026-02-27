@@ -204,6 +204,21 @@ namespace Aarch64
     {
         // Starting point for decoding: bits 31:25=1xx0000
 
+        // Decode STR (table)
+        bool is_str_zt0 = ((machInst & 0xFFFFFC1Fu) == 0xE03F8000u);
+
+        if (is_str_zt0) {
+            const uint8_t Rn = bits(machInst, 9, 5); // Base register Xn|SP
+            return new SmeStrZt0(machInst, Rn);
+        }
+
+        // Decode LDR (table)
+        bool is_ldr_zt0 = ((machInst & 0xFFFFFC1Fu) == 0xE13F8000u);
+
+        if (is_ldr_zt0) {
+            const uint8_t Rn = bits(machInst, 9, 5); // Base register Xn|SP
+            return new SmeLdrZt0(machInst, Rn);
+        }
         
         // Decode BFSCALE (multiple vectors)
         bool is_bfscale_two_regs  = ((machInst & 0xFFE0FFE1u) == 0xC16058C0u);
