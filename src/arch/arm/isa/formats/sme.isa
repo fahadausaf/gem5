@@ -249,6 +249,33 @@ namespace Aarch64
             
             return new SmeBfscaleSingle(machInst, nreg, dn, m);
         }
+
+        // Decode SEL (multi-vector)
+        bool is_sel_two_regs  = ((machInst & 0xFF31E021u) == 0xC0304000u);
+        bool is_sel_four_regs = ((machInst & 0xFF33E063u) == 0xC0306000u);
+
+        if (is_sel_two_regs || is_sel_four_regs) {
+            const uint8_t size = bits(machInst, 23, 22); // Element size
+            const uint8_t PNg  = bits(machInst, 12, 10); // Governing predicate
+            
+            uint8_t nreg, n, m, d;
+            if (is_sel_two_regs) {
+                nreg = 2;
+                n = bits(machInst, 9, 6) << 1;   // Zn:'0'
+                m = bits(machInst, 19, 17) << 1; // Zm:'0'
+                d = bits(machInst, 4, 1) << 1;   // Zd:'0'
+            } else {
+                nreg = 4;
+                n = bits(machInst, 9, 7) << 2;   // Zn:'00'
+                m = bits(machInst, 19, 18) << 2; // Zm:'00'
+                d = bits(machInst, 4, 2) << 2;   // Zd:'00'
+            }
+            
+            // PNg maps to predicate registers P8-P15
+            const uint8_t g = PNg + 8; 
+            
+            return new SmeSel(machInst, size, nreg, n, m, d, g);
+        }
         
         
         // Check for MOVAZ Tile To Vector 2-reg

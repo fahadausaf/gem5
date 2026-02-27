@@ -2340,6 +2340,93 @@ let {{
         
         exec_output += SmeExecute.subst(iop)
 
+    def smeSelInst(name, Name, opClass):
+        global header_output, decoder_output, exec_output
+        
+        code = r'''
+            const uint32_t esize_bits = 8 << size;
+            const uint32_t esize_bytes = esize_bits / 8;
+            
+            const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+            const uint32_t elements = VL_bytes / esize_bytes; 
+            
+            // Read the governing predicate-as-counter register (P8-P15)
+            ArmISA::VecPredRegContainer p_cont;
+            xc->tcBase()->getReg(ArmISA::vecPredRegClass[g], &p_cont);
+            uint16_t pred_val = p_cont.as<uint16_t>()[0];
+            
+            // Robust approximation of CounterToPredicate logic
+            bool inv = (pred_val >> 15) & 1;
+            uint16_t count = pred_val & 0x7FFF; 
+            
+            ArmISA::VecRegContainer zn_cont[4];
+            ArmISA::VecRegContainer zm_cont[4];
+            ArmISA::VecRegContainer zd_cont[4];
+            
+            // Fetch source and destination vectors
+            for (int r = 0; r < nreg; r++) {
+                xc->tcBase()->getReg(ArmISA::vecRegClass[n + r], &zn_cont[r]);
+                xc->tcBase()->getReg(ArmISA::vecRegClass[m + r], &zm_cont[r]);
+                xc->tcBase()->getReg(ArmISA::vecRegClass[d + r], &zd_cont[r]); // Read to preserve unwritten elements if needed
+            }
+            
+            // Execute the conditional select
+            for (int r = 0; r < nreg; r++) {
+                uint8_t* zd_ptr = zd_cont[r].as<uint8_t>();
+                const uint8_t* zn_ptr = zn_cont[r].as<uint8_t>();
+                const uint8_t* zm_ptr = zm_cont[r].as<uint8_t>();
+                
+                for (uint32_t e = 0; e < elements; e++) {
+                    uint32_t total_idx = r * elements + e;
+                    bool active = (total_idx < count) ^ inv; // Evaluate ActivePredicateElement
+                    
+                    if (esize_bytes == 1) {
+                        zd_ptr[e] = active ? zn_ptr[e] : zm_ptr[e];
+                    } else if (esize_bytes == 2) {
+                        ((uint16_t*)zd_ptr)[e] = active ? ((uint16_t*)zn_ptr)[e] : ((uint16_t*)zm_ptr)[e];
+                    } else if (esize_bytes == 4) {
+                        ((uint32_t*)zd_ptr)[e] = active ? ((uint32_t*)zn_ptr)[e] : ((uint32_t*)zm_ptr)[e];
+                    } else if (esize_bytes == 8) {
+                        ((uint64_t*)zd_ptr)[e] = active ? ((uint64_t*)zn_ptr)[e] : ((uint64_t*)zm_ptr)[e];
+                    }
+                }
+            }
+            
+            // Write back results
+            for (int r = 0; r < nreg; r++) {
+                xc->tcBase()->setReg(ArmISA::vecRegClass[d + r], &zd_cont[r]);
+            }
+            
+            DPRINTF(Arm, "SmeSel: Selected into Z%u from Z%u (true) and Z%u (false) using PN%u\n", d, n, m, g);
+        '''
+        
+        iop = InstObjParams(name, "Sme" + Name, "ArmStaticInst", {'code': code, 'op_class': opClass}, ['IsNonSpeculative'])
+        
+        header_output += (
+            "class Sme" + Name + " : public ArmStaticInst\n" +
+            "{\n" +
+            "  protected:\n" +
+            "    uint8_t size;\n" +
+            "    uint8_t nreg;\n" +
+            "    uint8_t n;\n" +
+            "    uint8_t m;\n" +
+            "    uint8_t d;\n" +
+            "    uint8_t g;\n" +
+            "  public:\n" +
+            "    Sme" + Name + "(ExtMachInst machInst, uint8_t _size, uint8_t _nreg, uint8_t _n, uint8_t _m, uint8_t _d, uint8_t _g);\n" +
+            "    Fault execute(ExecContext *, trace::InstRecord *) const override;\n" +
+            "};\n"
+        )
+        
+        decoder_output += (
+            "inline Sme" + Name + "::Sme" + Name + "(ExtMachInst machInst, uint8_t _size, uint8_t _nreg, uint8_t _n, uint8_t _m, uint8_t _d, uint8_t _g)\n" +
+            "    : ArmStaticInst(\"" + name + "\", machInst, " + opClass + "), size(_size), nreg(_nreg), n(_n), m(_m), d(_d), g(_g)\n" +
+            "{\n" +
+            "}\n"
+        )
+        
+        exec_output += SmeExecute.subst(iop)
+
     
 
     def smeCvtMvInst(name, Name, opClass, custom_code=None):
@@ -3969,6 +4056,9 @@ let {{
 
     # BFSCALE (multiple and single vectors)
     smeBfscaleSingleInst("bfscale_single", "BfscaleSingle", "SimdFloatMultOp")
+
+    # SEL
+    smeSelInst("sel_multi", "Sel", "SimdAluOp")
 
     # UCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
     ucvtfCode = r'''
