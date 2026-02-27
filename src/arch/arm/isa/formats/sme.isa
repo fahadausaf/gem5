@@ -204,6 +204,53 @@ namespace Aarch64
     {
         // Starting point for decoding: bits 31:25=1xx0000
 
+        
+        // Decode BFSCALE (multiple vectors)
+        bool is_bfscale_two_regs  = ((machInst & 0xFFE0FFE1u) == 0xC16058C0u);
+        bool is_bfscale_four_regs = ((machInst & 0xFFE0FFE1u) == 0xC14058C0u);
+
+        if (is_bfscale_two_regs || is_bfscale_four_regs) {
+            const uint8_t Zm  = bits(machInst, 20, 17); // Source multiplier vectors
+            const uint8_t Zdn = bits(machInst, 4, 1);   // Dest/Source vectors
+            
+            uint8_t nreg, dn, m;
+            if (is_bfscale_two_regs) {
+                nreg = 2;
+                dn = Zdn << 1; // Zdn:'0' (e.g., Z0, Z2, Z4)
+                m  = Zm << 1;  // Zm:'0' (e.g., Z0, Z2, Z4)
+            } else {
+                nreg = 4;
+                dn = Zdn << 2; // Zdn:'00' (e.g., Z0, Z4, Z8)
+                m  = Zm << 2;  // Zm:'00' (e.g., Z0, Z4, Z8)
+            }
+            
+            return new SmeBfscale(machInst, nreg, dn, m);
+        }
+
+        // Decode BFSCALE (multiple and single vector)
+        bool is_bfscale_single_two_regs  = ((machInst & 0xFFF0FFE1u) == 0xC120A180u);
+        bool is_bfscale_single_four_regs = ((machInst & 0xFFF0FFE3u) == 0xC100A180u);
+
+        if (is_bfscale_single_two_regs || is_bfscale_single_four_regs) {
+            const uint8_t Zm  = bits(machInst, 19, 16); // Single source multiplier vector is now 4 bits (Z0-Z15)
+            const uint8_t Zdn = bits(machInst, 4, 1);   
+            
+            uint8_t nreg, dn, m;
+            if (is_bfscale_single_two_regs) {
+                nreg = 2;
+                dn = Zdn << 1; // Zdn:'0' (e.g., Z0, Z2, Z4)
+            } else {
+                nreg = 4;
+                dn = Zdn << 1; // Zdn:'00' (Wait, Zdn[0] is fixed to 0, so bitwise this maps perfectly to multiples of 4)
+            }
+            
+            // m is directly mapped to the 4-bit Zm field (Z0-Z15)
+            m = Zm; 
+            
+            return new SmeBfscaleSingle(machInst, nreg, dn, m);
+        }
+        
+        
         // Check for MOVAZ Tile To Vector 2-reg
         if (Aarch64::isMovazTileToVec2reg(machInst)) {
             const uint8_t size = bits(machInst, 23, 22);

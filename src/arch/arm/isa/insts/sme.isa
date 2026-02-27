@@ -2171,6 +2171,175 @@ let {{
         
         exec_output += SmeExecute.subst(iop)
 
+    def smeBfscaleInst(name, Name, opClass):
+        global header_output, decoder_output, exec_output
+        
+        code = r'''
+            const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+            const uint32_t elements = VL_bytes / 2; // 16-bit elements (BFloat16)
+            
+            // Inline helper to securely scale a BFloat16 by 2^scale without cmath dependencies
+            auto bfscale = [](uint16_t bf, int16_t scale) -> uint16_t {
+                // Passthrough NaN, Inf, and literal Zero
+                if ((bf & 0x7FFF) >= 0x7F80) return bf; 
+                if ((bf & 0x7FFF) == 0) return bf; 
+                
+                // Map the BFloat16 directly into the upper 16 bits of a standard 32-bit float structure
+                union { float f; uint32_t i; } val;
+                val.i = (uint32_t)bf << 16;
+                
+                // Extract the 8-bit exponent and add the scale
+                int32_t exp = ((val.i >> 23) & 0xFF) + scale;
+                
+                // Handle float boundaries
+                if (exp <= 0) {
+                    val.i = 0; // Underflow flushes to zero
+                } else if (exp >= 255) {
+                    val.i = (val.i & 0x80000000) | 0x7F800000; // Overflow clamps to Infinity
+                } else {
+                    val.i = (val.i & 0x807FFFFF) | (exp << 23); // Repack the modified exponent
+                }
+                
+                return (uint16_t)(val.i >> 16);
+            };
+            
+            // Allocate containers for the multiple vectors
+            ArmISA::VecRegContainer zdn_cont[4];
+            ArmISA::VecRegContainer zm_cont[4];
+            uint16_t* zdn_ptr[4];
+            const int16_t* zm_ptr[4];
+            
+            // Fetch all required destination and source vectors
+            for (int r = 0; r < nreg; r++) {
+                xc->tcBase()->getReg(ArmISA::vecRegClass[dn + r], &zdn_cont[r]);
+                xc->tcBase()->getReg(ArmISA::vecRegClass[m + r], &zm_cont[r]);
+                zdn_ptr[r] = zdn_cont[r].as<uint16_t>();
+                zm_ptr[r] = zm_cont[r].as<int16_t>();
+            }
+            
+            // Process the scale destructively into Zdn
+            for (int r = 0; r < nreg; r++) {
+                for (uint32_t e = 0; e < elements; e++) {
+                    uint16_t element1 = zdn_ptr[r][e];
+                    int16_t element2 = zm_ptr[r][e]; 
+                    zdn_ptr[r][e] = bfscale(element1, element2);
+                }
+            }
+            
+            // Write the scaled vectors back to the hardware
+            for (int r = 0; r < nreg; r++) {
+                xc->tcBase()->setReg(ArmISA::vecRegClass[dn + r], &zdn_cont[r]);
+            }
+            
+            DPRINTF(Arm, "SmeBfscale: Scaled %u vectors in Zdn (base Z%u) by Zm (base Z%u)\n", nreg, dn, m);
+        '''
+        
+        iop = InstObjParams(name, "Sme" + Name, "ArmStaticInst", {'code': code, 'op_class': opClass}, ['IsNonSpeculative'])
+        
+        header_output += (
+            "class Sme" + Name + " : public ArmStaticInst\n" +
+            "{\n" +
+            "  protected:\n" +
+            "    uint8_t nreg;\n" +
+            "    uint8_t dn;\n" +
+            "    uint8_t m;\n" +
+            "  public:\n" +
+            "    Sme" + Name + "(ExtMachInst machInst, uint8_t _nreg, uint8_t _dn, uint8_t _m);\n" +
+            "    Fault execute(ExecContext *, trace::InstRecord *) const override;\n" +
+            "};\n"
+        )
+        
+        # Empty constructor protects against array allocation bounds panics
+        decoder_output += (
+            "inline Sme" + Name + "::Sme" + Name + "(ExtMachInst machInst, uint8_t _nreg, uint8_t _dn, uint8_t _m)\n" +
+            "    : ArmStaticInst(\"" + name + "\", machInst, " + opClass + "), nreg(_nreg), dn(_dn), m(_m)\n" +
+            "{\n" +
+            "}\n"
+        )
+        
+        exec_output += SmeExecute.subst(iop)
+
+    def smeBfscaleSingleInst(name, Name, opClass):
+        global header_output, decoder_output, exec_output
+        
+        code = r'''
+            const uint32_t VL_bytes = ArmStaticInst::getCurSmeVecLen<uint8_t>(xc->tcBase());
+            const uint32_t elements = VL_bytes / 2; // 16-bit elements
+            
+            // Inline helper to securely scale a BFloat16 by 2^scale without cmath dependencies
+            auto bfscale = [](uint16_t bf, int16_t scale) -> uint16_t {
+                if ((bf & 0x7FFF) >= 0x7F80) return bf; 
+                if ((bf & 0x7FFF) == 0) return bf; 
+                
+                union { float f; uint32_t i; } val;
+                val.i = (uint32_t)bf << 16;
+                
+                int32_t exp = ((val.i >> 23) & 0xFF) + scale;
+                
+                if (exp <= 0) {
+                    val.i = 0; 
+                } else if (exp >= 255) {
+                    val.i = (val.i & 0x80000000) | 0x7F800000; 
+                } else {
+                    val.i = (val.i & 0x807FFFFF) | (exp << 23); 
+                }
+                return (uint16_t)(val.i >> 16);
+            };
+            
+            ArmISA::VecRegContainer zdn_cont[4];
+            uint16_t* zdn_ptr[4];
+            
+            // Fetch the SINGLE source multiplier vector (Zm)
+            ArmISA::VecRegContainer zm_cont;
+            xc->tcBase()->getReg(ArmISA::vecRegClass[m], &zm_cont);
+            const int16_t* zm_ptr = zm_cont.as<int16_t>();
+            
+            // Fetch required destination vectors
+            for (int r = 0; r < nreg; r++) {
+                xc->tcBase()->getReg(ArmISA::vecRegClass[dn + r], &zdn_cont[r]);
+                zdn_ptr[r] = zdn_cont[r].as<uint16_t>();
+            }
+            
+            // Process the scale destructively using the shared single multiplier vector
+            for (int r = 0; r < nreg; r++) {
+                for (uint32_t e = 0; e < elements; e++) {
+                    uint16_t element1 = zdn_ptr[r][e];
+                    int16_t element2 = zm_ptr[e]; // Scale is pulled from the single zm vector
+                    zdn_ptr[r][e] = bfscale(element1, element2);
+                }
+            }
+            
+            for (int r = 0; r < nreg; r++) {
+                xc->tcBase()->setReg(ArmISA::vecRegClass[dn + r], &zdn_cont[r]);
+            }
+            
+            DPRINTF(Arm, "SmeBfscaleSingle: Scaled %u vectors in Zdn (base Z%u) by single Zm (Z%u)\n", nreg, dn, m);
+        '''
+        
+        iop = InstObjParams(name, "Sme" + Name, "ArmStaticInst", {'code': code, 'op_class': opClass}, ['IsNonSpeculative'])
+        
+        header_output += (
+            "class Sme" + Name + " : public ArmStaticInst\n" +
+            "{\n" +
+            "  protected:\n" +
+            "    uint8_t nreg;\n" +
+            "    uint8_t dn;\n" +
+            "    uint8_t m;\n" +
+            "  public:\n" +
+            "    Sme" + Name + "(ExtMachInst machInst, uint8_t _nreg, uint8_t _dn, uint8_t _m);\n" +
+            "    Fault execute(ExecContext *, trace::InstRecord *) const override;\n" +
+            "};\n"
+        )
+        
+        decoder_output += (
+            "inline Sme" + Name + "::Sme" + Name + "(ExtMachInst machInst, uint8_t _nreg, uint8_t _dn, uint8_t _m)\n" +
+            "    : ArmStaticInst(\"" + name + "\", machInst, " + opClass + "), nreg(_nreg), dn(_dn), m(_m)\n" +
+            "{\n" +
+            "}\n"
+        )
+        
+        exec_output += SmeExecute.subst(iop)
+
     
 
     def smeCvtMvInst(name, Name, opClass, custom_code=None):
@@ -3794,6 +3963,12 @@ let {{
 
     # LUTI4 (two registers)
     smeLuti4TwoInst("luti4_2reg", "Luti4Two", "MatrixMovOp")
+
+    # BFSCALE (multiple vectors)
+    smeBfscaleInst("bfscale_multi", "Bfscale", "SimdFloatMultOp")
+
+    # BFSCALE (multiple and single vectors)
+    smeBfscaleSingleInst("bfscale_single", "BfscaleSingle", "SimdFloatMultOp")
 
     # UCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
     ucvtfCode = r'''
