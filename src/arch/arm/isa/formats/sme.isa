@@ -204,6 +204,13 @@ namespace Aarch64
     {
         // Starting point for decoding: bits 31:25=1xx0000
 
+        // Decode ZERO (table)
+        bool is_zero_zt0 = ((machInst & 0xFFFFFFFFu) == 0xC0480001u);
+
+        if (is_zero_zt0) {
+            return new SmeZeroZt0(machInst);
+        }
+        
         // Decode STR (table)
         bool is_str_zt0 = ((machInst & 0xFFFFFC1Fu) == 0xE03F8000u);
 

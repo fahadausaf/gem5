@@ -2542,6 +2542,42 @@ let {{
         
         exec_output += SmeExecute.subst(iop)
 
+    def smeZeroZt0Inst(name, Name, opClass):
+        global header_output, decoder_output, exec_output
+        
+        code = r'''
+            // Zero out the entire 64-byte ZT0 table
+            memset(emulated_ZT0_table, 0, 64);
+            DPRINTF(Arm, "ZeroZt0: Cleared ZT0 register\n");
+        '''
+        
+        iop = InstObjParams(name, "Sme" + Name, "ArmStaticInst", {'code': code, 'op_class': opClass}, ['IsNonSpeculative'])
+        
+        header_output += '''
+            #ifndef EMULATED_ZT0_DEFINED
+            #define EMULATED_ZT0_DEFINED
+            inline uint64_t emulated_ZT0_table[8] = {0};
+            #endif
+        '''
+        
+        header_output += (
+            "class Sme" + Name + " : public ArmStaticInst\n" +
+            "{\n" +
+            "  public:\n" +
+            "    Sme" + Name + "(ExtMachInst machInst);\n" +
+            "    Fault execute(ExecContext *, trace::InstRecord *) const override;\n" +
+            "};\n"
+        )
+        
+        decoder_output += (
+            "inline Sme" + Name + "::Sme" + Name + "(ExtMachInst machInst)\n" +
+            "    : ArmStaticInst(\"" + name + "\", machInst, " + opClass + ")\n" +
+            "{\n" +
+            "}\n"
+        )
+        
+        exec_output += SmeExecute.subst(iop)
+
     def smeCvtMvInst(name, Name, opClass, custom_code=None):
         global header_output, decoder_output, exec_output
 
@@ -4178,6 +4214,9 @@ let {{
 
     # STR (Table)
     smeStrZt0Inst("str_zt0", "StrZt0", "MemWriteOp")
+
+    # ZERO (Table)
+    smeZeroZt0Inst("zero_zt0", "ZeroZt0", "MatrixMovOp")
 
     # UCVTF (multi-vector, 2-reg and 4-reg) — FEAT_SME2
     ucvtfCode = r'''
