@@ -964,6 +964,18 @@ namespace Aarch64
         return new Unknown64(machInst);
     }  // decodeSve2SignSatDoubleMulHighUnpred
 
+    // ADDQP
+    StaticInstPtr
+    decodeSveAddqp(ExtMachInst machInst)
+    {
+        RegIndex zd = (RegIndex) (uint8_t) bits(machInst, 4, 0);
+        RegIndex zn = (RegIndex) (uint8_t) bits(machInst, 9, 5);
+        RegIndex zm = (RegIndex) (uint8_t) bits(machInst, 20, 16);
+        uint8_t size = bits(machInst, 23, 22);
+
+        return decodeSveBinUnpredU<SveAddqp>(size, machInst, zd, zn, zm);
+    }
+    
     // C4.1.44 SVE2 Integer Multiply - Unpredicated
     StaticInstPtr
     decodeSve2IntMulUnpred(ExtMachInst machInst)
@@ -974,6 +986,11 @@ namespace Aarch64
             return decodeSve2IntMulVecUnpred(machInst);
           case 0x2:           // op0=10
             return decodeSve2SignSatDoubleMulHighUnpred(machInst);
+          case 0x3:           // op0=11
+            if (bits(machInst, 10) == 0x0) {
+                return decodeSveAddqp(machInst);
+            }
+            break;
         }
         return new Unknown64(machInst);
     }  // decodeSve2IntMulUnpred
@@ -7278,6 +7295,7 @@ namespace Aarch64
             machInst, zd, zn, zm, pg, SvePredType::SELECT);
     }  // decodeSveSelVec
 
+    
     // FCMLA (vectors)
     StaticInstPtr
     decodeSveFpCplxMulAddVec(ExtMachInst machInst)
