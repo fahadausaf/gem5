@@ -111,6 +111,7 @@ namespace Aarch64
     StaticInstPtr decodeSveFpClamp(ExtMachInst machInst);
     StaticInstPtr decodeSveFpMulIndexed(ExtMachInst machInst);
     StaticInstPtr decodeSveFpMatMulAdd(ExtMachInst machInst);
+    StaticInstPtr decodeSveBfMatMulAddNonWiden(ExtMachInst machInst);
     StaticInstPtr decodeSveFpRecursiveReduc(ExtMachInst machInst);
     StaticInstPtr decodeSveFpArithUnpred(ExtMachInst machInst);
     StaticInstPtr decodeSveFpCmpVec(ExtMachInst machInst);
@@ -568,8 +569,11 @@ namespace Aarch64
                 }
                 break;
               case 0x7: // op1=0xx1xxxx op2=111xxx
-                if (bits(machInst, 12, 10) == 0x1) {
-                    // op1=0xx1xxxx op2=111001
+                if (bits(machInst, 12, 10) == 0x0) {
+                    // BFMMLA (non-widening)
+                    return decodeSveBfMatMulAddNonWiden(machInst);
+                } else if (bits(machInst, 12, 10) == 0x1) {
+                    // Existing FP matrix multiply-accumulate group
                     return decodeSveFpMatMulAdd(machInst);
                 }
                 break;

@@ -975,6 +975,30 @@ namespace Aarch64
 
         return decodeSveBinUnpredU<SveAddqp>(size, machInst, zd, zn, zm);
     }
+
+    // ADDSUBP
+    StaticInstPtr
+    decodeSveAddsubp(ExtMachInst machInst)
+    {
+        RegIndex zd = (RegIndex) (uint8_t) bits(machInst, 4, 0);
+        RegIndex zn = (RegIndex) (uint8_t) bits(machInst, 9, 5);
+        RegIndex zm = (RegIndex) (uint8_t) bits(machInst, 20, 16);
+        uint8_t size = bits(machInst, 23, 22);
+
+        return decodeSveBinUnpredU<SveAddsubp>(size, machInst, zd, zn, zm);
+    }
+
+    // BFMMLA (non-widening)
+    StaticInstPtr
+    decodeSveBfMatMulAddNonWiden(ExtMachInst machInst)
+    {
+        RegIndex zda = (RegIndex) (uint8_t) bits(machInst, 4, 0);
+        RegIndex zn = (RegIndex) (uint8_t) bits(machInst, 9, 5);
+        RegIndex zm = (RegIndex) (uint8_t) bits(machInst, 20, 16);
+
+        return new SveBFmmlaNw<uint16_t,uint16_t,uint16_t>(
+            machInst, zda, zn, zm);
+    }
     
     // C4.1.44 SVE2 Integer Multiply - Unpredicated
     StaticInstPtr
@@ -982,15 +1006,16 @@ namespace Aarch64
     {
         uint8_t op0 = bits(machInst, 12, 11);
         switch (op0) {
-          case 0x0: case 0x1: // op0=0x
+          case 0x0: case 0x1:
             return decodeSve2IntMulVecUnpred(machInst);
-          case 0x2:           // op0=10
+          case 0x2:
             return decodeSve2SignSatDoubleMulHighUnpred(machInst);
-          case 0x3:           // op0=11
+          case 0x3:
             if (bits(machInst, 10) == 0x0) {
                 return decodeSveAddqp(machInst);
+            } else {
+                return decodeSveAddsubp(machInst);
             }
-            break;
         }
         return new Unknown64(machInst);
     }  // decodeSve2IntMulUnpred

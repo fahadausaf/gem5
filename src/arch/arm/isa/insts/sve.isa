@@ -5066,6 +5066,42 @@ let {{
     sveBinInst('addqp', 'Addqp', 'SimdAddOp', unsignedTypes, '',
                customIterCode=addqpCode)
 
+    # ADDSUBP
+    addsubpCode = '''
+        DPRINTF(Arm, "Executing SVE2p3 ADDSUBP: eCount=%d, eltsPerSegment=%d\\n", 
+                eCount, (16 / sizeof(Element)));
+
+        constexpr unsigned eltsPerSegment = 16 / sizeof(Element);
+
+        ArmISA::VecRegContainer tmpC;
+        auto auxDest = tmpC.as<Element>();
+
+        for (unsigned s = 0; s < eCount / eltsPerSegment; ++s) {
+            const unsigned base = s * eltsPerSegment;
+
+            for (unsigned e = 0; e < eltsPerSegment / 2; ++e) {
+                // Lower half: Add adjacent pairs of Op1 (Zn)
+                auxDest[base + e] =
+                    AA64FpOp1_x[base + 2 * e + 0] +
+                    AA64FpOp1_x[base + 2 * e + 1];
+
+                // Upper half: Subtract adjacent pairs of Op2 (Zm)
+                auxDest[base + eltsPerSegment / 2 + e] =
+                    AA64FpOp2_x[base + 2 * e + 0] -
+                    AA64FpOp2_x[base + 2 * e + 1];
+            }
+        }
+
+        for (unsigned i = 0; i < eCount; ++i) {
+            AA64FpDest_x[i] = auxDest[i];
+        }
+
+        DPRINTF(Arm, "Finished Executing SVE2p3 ADDSUBP: eCount=%d, eltsPerSegment=%d\\n", 
+                eCount, (16 / sizeof(Element)));
+    '''
+    sveBinInst('addsubp', 'Addsubp', 'SimdAddOp', unsignedTypes, '',
+               customIterCode=addsubpCode)
+
     # ADDVL
     buildXImmDataInst('addvl', addvlCode % 8, buildCc=False)
     # ADR
@@ -5368,6 +5404,35 @@ let {{
     '''
     sveMatMulInst('bfmmla', 'BFmmla', 'SimdBf16MatMultAccOp', ["uint32_t"],
                   numDestRows=2, numDestCols=2, K=2, elt_mul_op=bfmmlaCode)
+
+    # BFMMLA (non-widening)
+    bfmmlaNwCode = '''
+        DPRINTF(Arm, "Executing SVE2 BFMMLA (non-widening): eCount=%d\\n",eCount);
+
+        FPSCR fpscr = FpscrExc & ~FpscrAhpMask;
+        FPCR fpcr = (FPCR)Fpcr;
+
+        if (k == 0) {
+            prodSum = fplibBfMul(srcElemA, srcElemB, fpscr, fpcr);
+        } else {
+            prodSum = fplibBfAdd(
+                prodSum,
+                fplibBfMul(srcElemA, srcElemB, fpscr, fpcr),
+                fpscr, fpcr);
+        }
+
+        if (k == K - 1) {
+            destElem = fplibBfAdd(destElem, prodSum, fpscr, fpcr);
+        }
+
+        FpscrExc = fpscr;
+
+        DPRINTF(Arm, "Finished Executing SVE2 BFMMLA (non-widening)\\n");
+    '''
+    sveMatMulInst('bfmmla', 'BFmmlaNw', 'SimdBf16MatMultAccOp', ['uint16_t'],
+                  numDestRows=2, numDestCols=2, K=2,
+                  elt_mul_op=bfmmlaNwCode)
+
     # BFMUL (indexed)
     bfmulCode = bfBinOp % 'Mul'
     sveBinIdxInst('bfmul', 'BfmulIdx', 'SimdBf16MultOp', ('uint16_t',),
