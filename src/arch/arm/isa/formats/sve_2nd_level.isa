@@ -4570,19 +4570,27 @@ namespace Aarch64
             // LUTI2 - Halfword
             break;
           case 0x3: // op1=011
-            // LUTI6 - Halfword
-            if (bits(machInst, 22) == 1) {
+            {
                 RegIndex zd = (RegIndex) (uint8_t) bits(machInst, 4, 0);
                 RegIndex zn = (RegIndex) (uint8_t) bits(machInst, 9, 5);
                 RegIndex zm = (RegIndex) (uint8_t) bits(machInst, 20, 16);
-                uint8_t part = bits(machInst, 23);
 
-                if (part == 0) {
-                    return new SveLuti6H0<uint16_t>(
+                // LUTI6 - Byte
+                if (bits(machInst, 23, 22) == 0x0) {
+                    return new SveLuti6B<uint8_t>(
                             machInst, zd, zn, (zn + 1) % 32, zm);
-                } else {
-                    return new SveLuti6H1<uint16_t>(
-                            machInst, zd, zn, (zn + 1) % 32, zm);
+                }
+
+                // LUTI6 - Halfword
+                if (bits(machInst, 22) == 1) {
+                    uint8_t part = bits(machInst, 23);
+                    if (part == 0) {
+                        return new SveLuti6H0<uint16_t>(
+                                machInst, zd, zn, (zn + 1) % 32, zm);
+                    } else {
+                        return new SveLuti6H1<uint16_t>(
+                                machInst, zd, zn, (zn + 1) % 32, zm);
+                    }
                 }
             }
             break;
