@@ -6016,6 +6016,55 @@ let {{
     sveBinInst('fcvtzsn', 'Fcvtzsn', 'SimdFloatCvtOp',
             ('uint32_t',),
             '', customIterCode=fcvtzsnCode)
+
+    # FCVTZUN
+    fcvtzunCode = '''
+        using SrcElement = typename bigger_type_t<Element>::type;
+
+        FPSCR fpscr = FpscrExc & ~FpscrAhpMask;
+        [[maybe_unused]] FPCR fpcr = (FPCR)Fpcr;
+
+        ArmISA::VecRegContainer tmpC;
+        auto auxDest = tmpC.as<Element>();
+
+        union RegElem
+        {
+            Element elements[2];
+            SrcElement bigElements[1];
+        };
+        RegElem regElem;
+
+        const unsigned srcCount = eCount / 2;
+
+        for (unsigned i = 0; i < srcCount; ++i) {
+            regElem.elements[0] = AA64FpOp1_x[2 * i + 0];
+            regElem.elements[1] = AA64FpOp1_x[2 * i + 1];
+            SrcElement srcElem1 = regElem.bigElements[0];
+
+            regElem.elements[0] = AA64FpOp2_x[2 * i + 0];
+            regElem.elements[1] = AA64FpOp2_x[2 * i + 1];
+            SrcElement srcElem2 = regElem.bigElements[0];
+
+            auxDest[2 * i + 0] = fplibFPToFixed<SrcElement, Element>(
+                srcElem1, 0, true, FPRounding_ZERO, fpscr, fpcr);
+
+            auxDest[2 * i + 1] = fplibFPToFixed<SrcElement, Element>(
+                srcElem2, 0, true, FPRounding_ZERO, fpscr, fpcr);
+        }
+
+        for (unsigned i = 0; i < eCount; ++i) {
+            AA64FpDest_x[i] = auxDest[i];
+        }
+
+        FpscrExc = fpscr;
+
+        DPRINTF(Arm,
+            "Finished Executing SVE2p3 FCVTZUN: eCount=%u srcCount=%u elemBits=%u srcElemBits=%u\\n",
+            eCount, srcCount, (unsigned)(8 * sizeof(Element)),
+            (unsigned)(8 * sizeof(SrcElement)));
+    '''
+    sveBinInst('fcvtzun', 'Fcvtzun', 'SimdFloatCvtOp',
+            ('uint32_t',), '', customIterCode=fcvtzunCode)
     
     # FDIV
     fdivCode = fpBinOp % 'Div'

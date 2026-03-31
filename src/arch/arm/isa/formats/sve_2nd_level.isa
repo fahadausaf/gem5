@@ -4845,6 +4845,23 @@ namespace Aarch64
         return decodeSveBinUnpredUnequalU<SveFcvtzsn>(
                 size, machInst, zd, zn, zn + 1);
     }
+
+    // FCVTZUN
+    StaticInstPtr
+    decodeSveFcvtzun(ExtMachInst machInst)
+    {
+        RegIndex zd = (RegIndex) (uint8_t) bits(machInst, 4, 0);
+        RegIndex zn = (RegIndex) ((uint8_t) bits(machInst, 9, 6) << 1);
+        uint8_t size = bits(machInst, 23, 22);
+
+        // Temporary bring-up: only size=11 (.s from {.d-.d})
+        if (size != 0x3) {
+            return new Unknown64(machInst);
+        }
+
+        return decodeSveBinUnpredUnequalU<SveFcvtzun>(
+                size, machInst, zd, zn, zn + 1);
+    }
     
     // C4.1.78 SVE floating-point unary operations - unpredicated
     StaticInstPtr
@@ -4853,9 +4870,12 @@ namespace Aarch64
         uint8_t op1 = bits(machInst, 18, 16);
         switch (op1) {
           case 0x5: // op1=101
-            if (bits(machInst, 11) == 0x0 &&
-                bits(machInst, 10) == 0x0) {
-                return decodeSveFcvtzsn(machInst);
+            if (bits(machInst, 11) == 0x0) {
+                if (bits(machInst, 10) == 0x0) {
+                    return decodeSveFcvtzsn(machInst);
+                } else {
+                    return decodeSveFcvtzun(machInst);
+                }
             }
             break;
 
