@@ -4569,6 +4569,23 @@ namespace Aarch64
           case 0x2: case 0x6: // op1=x10
             // LUTI2 - Halfword
             break;
+          case 0x3: // op1=011
+            // LUTI6 - Halfword
+            if (bits(machInst, 22) == 1) {
+                RegIndex zd = (RegIndex) (uint8_t) bits(machInst, 4, 0);
+                RegIndex zn = (RegIndex) (uint8_t) bits(machInst, 9, 5);
+                RegIndex zm = (RegIndex) (uint8_t) bits(machInst, 20, 16);
+                uint8_t part = bits(machInst, 23);
+
+                if (part == 0) {
+                    return new SveLuti6H0<uint16_t>(
+                            machInst, zd, zn, (zn + 1) % 32, zm);
+                } else {
+                    return new SveLuti6H1<uint16_t>(
+                            machInst, zd, zn, (zn + 1) % 32, zm);
+                }
+            }
+            break;
           case 0x4: // op1=100
             // LUTI2 - Byte
             break;

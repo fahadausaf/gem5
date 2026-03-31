@@ -3906,6 +3906,62 @@ let {{
                          'class_name' : 'Sve' + Name}
             exec_output += SveOpExecDeclare.subst(substDict)
 
+    def sveLuti6HalfInst(name, Name, opClass, part):
+        global header_output, exec_output
+
+        code = sveEnabledCheckCode + '''
+            unsigned eCount = ArmStaticInst::getCurSveVecLen<Element>(
+                    xc->tcBase());
+
+            // LUTI6 (16-bit) requires VL >= 512 bits, i.e. at least 32 halfwords.
+            if (eCount < 32) {
+                return std::make_shared<UndefinedInstruction>(machInst, false,
+                                                            "%(mnemonic)s");
+            }
+
+            constexpr unsigned tableElems = 32;   // 512 bits / 16 bits
+            constexpr unsigned indexBits  = 6;
+            constexpr unsigned part       = %(part)d;
+
+            const unsigned iBase = eCount * part;
+
+            ArmISA::VecRegContainer tmpVecC;
+            auto auxDest = tmpVecC.as<Element>();
+
+            for (unsigned e = 0; e < eCount; ++e) {
+                const unsigned bitIdx  = (iBase + e) * indexBits;
+                const unsigned byteIdx = bitIdx / 8;
+                const unsigned shift   = bitIdx %% 8;
+
+                uint32_t packed =
+                    (uint32_t)AA64FpOp3_ub[byteIdx] |
+                    ((uint32_t)AA64FpOp3_ub[byteIdx + 1] << 8) |
+                    ((uint32_t)AA64FpOp3_ub[byteIdx + 2] << 16);
+
+                unsigned index = (packed >> shift) & 0x3f;
+
+                if (index < tableElems) {
+                    auxDest[e] = AA64FpOp1_x[index];
+                } else {
+                    auxDest[e] = AA64FpOp2_x[index - tableElems];
+                }
+            }
+
+            for (unsigned i = 0; i < eCount; ++i) {
+                AA64FpDest_x[i] = auxDest[i];
+            }
+        ''' % dict(mnemonic=name, part=part)
+
+        iop = ArmInstObjParams(name, 'Sve' + Name, 'SveTblThreeSrcOp',
+                            {'code': code, 'op_class': opClass}, [])
+        header_output += SveBinUnpred3SrcOpDeclare.subst(iop)
+        exec_output += SveOpExecute.subst(iop)
+        exec_output += SveOpExecDeclare.subst({
+            'targs': 'uint16_t',
+            'class_name': 'Sve' + Name
+        })
+
+        
     # Generate definitions for integer add/subtract long with carry
     def sveLongCarryInst(name, Name, opClass, decoder = 'Generic',
             uptTop = False, subtract = False):
@@ -8258,6 +8314,13 @@ let {{
     sveTblInst('tbx', 'Tbx', 'SimdAluOp', merging=True)
     # TBXQ
     sveTblInst('tbxq', 'Tbxq', 'SimdAluOp', merging=True, isSeg=True)
+
+    # LUTI6 (16-bit), part 0
+    sveLuti6HalfInst('luti6', 'Luti6H0', 'SimdAluOp', 0)
+
+    # LUTI6 (16-bit), part 1
+    sveLuti6HalfInst('luti6', 'Luti6H1', 'SimdAluOp', 1)
+
     # TRN1, TRN2 (predicates)
     trnPredIterCode = '''
         constexpr unsigned sz = sizeof(Element);
