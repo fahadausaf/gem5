@@ -130,6 +130,8 @@ namespace Aarch64
     StaticInstPtr decodeSveMemScatter(ExtMachInst machInst);
     StaticInstPtr decodeSveMemContigStoreWithImmOffset(ExtMachInst machInst);
     StaticInstPtr decodeSveMemScatterWithOptSignExt(ExtMachInst machInst);
+
+    StaticInstPtr decodeSve2WayAbsDiffSumAccLong(ExtMachInst machInst);
 }
 }};
 
@@ -415,6 +417,9 @@ namespace Aarch64
                     return decodeSve2IntPred(machInst);
                 } else if (bits(machInst, 15, 13) == 0b111) {
                     return decodeSvePermVecElemQuad(machInst);
+                } else if (bits(machInst, 15, 12) == 0b1101 &&
+                           bits(machInst, 10) == 1) {
+                    return decodeSve2WayAbsDiffSumAccLong(machInst);
                 } else if (bits(machInst, 15, 11) == 0b11000) {
                     return decodeSveIntClamp(machInst);
                 } else if (bits(machInst, 15, 11) == 0b11001) {

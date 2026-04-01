@@ -2060,6 +2060,48 @@ let {{
                          'class_name' : 'Sve' + Name}
             exec_output += SveOpExecDeclare.subst(substDict)
 
+    # Generates definitions for bottom widening unpredicated SVE conversions
+    # (constructive, one source, widening, low/bottom half of source)
+    def sveCvtBottomUnpredInst(name, Name, opClass, sdtypes, op,
+                            decoder='Generic'):
+        global header_output, exec_output, decoders
+
+        code = sveEnabledCheckCode + '''
+        unsigned eCount = ArmStaticInst::getCurSveVecLen<DElement>(
+                xc->tcBase());
+
+        DPRINTF(Arm, "Executing ''' + Name + ''': eCount=%d\\n", eCount);
+
+        // Copy the low/bottom half of the source first so Zd==Zn is safe.
+        ArmISA::VecRegContainer tmpVecC;
+        auto auxOp1 = tmpVecC.as<SElement>();
+        for (unsigned i = 0; i < eCount; ++i) {
+            auxOp1[i] = AA64FpOp1_xs[i];
+        }
+
+        for (unsigned i = 0; i < eCount; ++i) {
+            SElement srcElem1 = auxOp1[i];
+            DElement destElem = 0;
+    ''' + op + '''
+            AA64FpDest_xd[i] = destElem;
+        }
+
+        DPRINTF(Arm, "Finished ''' + Name + ''': eCount=%d\\n", eCount);
+        '''
+
+        iop = ArmInstObjParams(name, 'Sve' + Name, 'SveUnpackOp',
+                {'code': code, 'op_class': opClass}, [])
+        header_output += SveUnpackOpDeclare.subst(iop)
+        exec_output += SveWideningOpExecute.subst(iop)
+
+        for srcType, dstType in sdtypes:
+            substDict = {
+                'targs': srcType + ', ' + dstType,
+                'class_name': 'Sve' + Name
+            }
+            exec_output += SveOpExecDeclare.subst(substDict)
+
+
     # Generates definitions for unary SVE instructions (always constructive)
     def sveUnaryInst(name, Name, opClass, types, op, predType=PredType.NONE,
                      srcRegType=SrcRegType.Vector, decoder='Generic'):
@@ -3287,6 +3329,52 @@ let {{
         for type in types:
             substDict = {'targs': type,
                          'class_name': 'Sve' + Name}
+            exec_output += SveOpExecDeclare.subst(substDict)
+
+    # Generates definitions for ternary destructive SVE pair-long
+    # instructions (always unpredicated).
+    def sveTerPairLongInst(name, Name, opClass, types, op):
+        global header_output, exec_output
+
+        code = sveEnabledCheckCode + '''
+        typedef typename bigger_type_t<Element>::type BigElement;
+        unsigned eCount = ArmStaticInst::getCurSveVecLen<Element>(
+                xc->tcBase());
+
+        union RegElem
+        {
+            Element elements[2];
+            BigElement bigElements[1];
+        };
+        RegElem regElem;
+
+        for (int i = 0; i < eCount / 2; ++i) {
+            regElem.elements[0] = AA64FpDestMerge_x[2 * i + 0];
+            regElem.elements[1] = AA64FpDestMerge_x[2 * i + 1];
+            BigElement destElem = regElem.bigElements[0];
+
+            Element srcElem1_a = AA64FpOp1_x[2 * i + 0];
+            Element srcElem1_b = AA64FpOp1_x[2 * i + 1];
+            Element srcElem2_a = AA64FpOp2_x[2 * i + 0];
+            Element srcElem2_b = AA64FpOp2_x[2 * i + 1];
+
+            %(op)s
+
+            regElem.bigElements[0] = destElem;
+            AA64FpDest_x[2 * i + 0] = regElem.elements[0];
+            AA64FpDest_x[2 * i + 1] = regElem.elements[1];
+        }''' % {'op': op}
+
+        iop = ArmInstObjParams(name, 'Sve' + Name, 'SveTerUnpredOp',
+                               {'code': code, 'op_class': opClass}, [])
+        header_output += sveTerUnpredOpDeclare.subst(iop)
+        exec_output += SveOpExecute.subst(iop)
+
+        for type in types:
+            substDict = {
+                'targs': type,
+                'class_name': 'Sve' + Name
+            }
             exec_output += SveOpExecDeclare.subst(substDict)
 
     # Generates definitions for ternary destructive SVE Matrix
@@ -6951,6 +7039,26 @@ let {{
     # SABALT
     sveTerLongInst('sabalt', 'Sabalt', 'SimdAluOp', smallSignedTypes,
                     abalCode, uptTop=True)
+
+    # SABAL / UABAL
+    abalPairCode = '''
+            BigElement diff_a = (srcElem1_a > srcElem2_a) ?
+                ((BigElement)srcElem1_a - (BigElement)srcElem2_a) :
+                ((BigElement)srcElem2_a - (BigElement)srcElem1_a);
+
+            BigElement diff_b = (srcElem1_b > srcElem2_b) ?
+                ((BigElement)srcElem1_b - (BigElement)srcElem2_b) :
+                ((BigElement)srcElem2_b - (BigElement)srcElem1_b);
+
+            destElem += diff_a + diff_b;
+    '''
+
+    sveTerPairLongInst('sabal', 'Sabal', 'SimdAluOp',
+                       smallSignedTypes, abalPairCode)
+
+    sveTerPairLongInst('uabal', 'Uabal', 'SimdAluOp',
+                       smallUnsignedTypes, abalPairCode)
+
     # SABD
     abdCode = '''
             destElem = (srcElem1 > srcElem2) ? (srcElem1 - srcElem2) :
@@ -7015,6 +7123,16 @@ let {{
                scvtfCode, CvtDir.Narrow)
     sveCvtInst('scvtf', 'ScvtfWiden', 'SimdCvtOp', ('uint32_t, uint64_t',),
                scvtfCode, CvtDir.Widen)
+
+    # SCVTF (bottom, unpredicated)
+    sveCvtBottomUnpredInst(
+        'scvtf', 'ScvtfBottomUnpred', 'SimdCvtOp',
+        [('uint8_t',  'uint16_t'),
+         ('uint16_t', 'uint32_t'),
+         ('uint32_t', 'uint64_t')],
+        scvtfCode
+    )
+
     # SDIV
     sdivCode = '''
         constexpr Element ELEM_MIN = std::numeric_limits<Element>::min();
@@ -8485,6 +8603,16 @@ let {{
                ucvtfCode, CvtDir.Narrow)
     sveCvtInst('ucvtf', 'UcvtfWiden', 'SimdCvtOp', ('uint32_t, uint64_t',),
                ucvtfCode, CvtDir.Widen)
+
+    # UCVTF (bottom, unpredicated)
+    sveCvtBottomUnpredInst(
+        'ucvtf', 'UcvtfBottomUnpred', 'SimdCvtOp',
+        [('uint8_t',  'uint16_t'),
+         ('uint16_t', 'uint32_t'),
+         ('uint32_t', 'uint64_t')],
+        ucvtfCode
+    )
+
     # UDIV
     udivCode = 'destElem = (srcElem2 == 0) ? 0 : (srcElem1 / srcElem2);'
     sveBinInst('udiv', 'Udiv', 'SimdDivOp', unsignedTypes, udivCode,

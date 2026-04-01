@@ -4604,6 +4604,25 @@ namespace Aarch64
         return new Unknown64(machInst);
     }
 
+    // SVE2 two-way absolute difference sum and accumulate long
+    StaticInstPtr
+    decodeSve2WayAbsDiffSumAccLong(ExtMachInst machInst)
+    {
+        RegIndex zda = (RegIndex) (uint8_t) bits(machInst, 4, 0);
+        RegIndex zn = (RegIndex) (uint8_t) bits(machInst, 9, 5);
+        RegIndex zm = (RegIndex) (uint8_t) bits(machInst, 20, 16);
+        uint8_t U = bits(machInst, 11);
+        uint8_t size = bits(machInst, 23, 22);
+
+        if (U) {
+            return decodeSveBinUnpredUnequalU<SveUabal>(
+                    size, machInst, zda, zn, zm);
+        } else {
+            return decodeSveBinUnpredUnequalS<SveSabal>(
+                    size, machInst, zda, zn, zm);
+        }
+    }
+
     // C4.1.74.1 SVE2 crypto unary operations
     StaticInstPtr
     decodeSve2CryptUnaryOp(ExtMachInst machInst)
@@ -4887,13 +4906,49 @@ namespace Aarch64
         return decodeSveBinUnpredUnequalU<SveFcvtzun>(
                 size, machInst, zd, zn, zn + 1);
     }
-    
+
     // C4.1.78 SVE floating-point unary operations - unpredicated
     StaticInstPtr
     decodeSveFpUnaryOpUnpred(ExtMachInst machInst)
     {
+        RegIndex zd = (RegIndex) (uint8_t) bits(machInst, 4, 0);
+        RegIndex zn = (RegIndex) (uint8_t) bits(machInst, 9, 5);
+        uint8_t size = bits(machInst, 23, 22);
         uint8_t op1 = bits(machInst, 18, 16);
+
         switch (op1) {
+          case 0x4: // op1=100
+            // SCVTF / UCVTF (bottom, unpredicated)
+            switch (size) {
+              case 0x1: // Zd.H, Zn.B
+                if (bits(machInst, 10) == 0x0) {
+                    return new SveScvtfBottomUnpred<uint8_t, uint16_t>(
+                        machInst, zd, zn);
+                } else {
+                    return new SveUcvtfBottomUnpred<uint8_t, uint16_t>(
+                        machInst, zd, zn);
+                }
+
+              case 0x2: // Zd.S, Zn.H
+                if (bits(machInst, 10) == 0x0) {
+                    return new SveScvtfBottomUnpred<uint16_t, uint32_t>(
+                        machInst, zd, zn);
+                } else {
+                    return new SveUcvtfBottomUnpred<uint16_t, uint32_t>(
+                        machInst, zd, zn);
+                }
+
+              case 0x3: // Zd.D, Zn.S
+                if (bits(machInst, 10) == 0x0) {
+                    return new SveScvtfBottomUnpred<uint32_t, uint64_t>(
+                        machInst, zd, zn);
+                } else {
+                    return new SveUcvtfBottomUnpred<uint32_t, uint64_t>(
+                        machInst, zd, zn);
+                }
+            }
+            break;
+
           case 0x5: // op1=101
             if (bits(machInst, 11) == 0x0) {
                 if (bits(machInst, 10) == 0x0) {
@@ -4904,7 +4959,8 @@ namespace Aarch64
             }
             break;
 
-          case 0x6: case 0x7:
+          case 0x6:
+          case 0x7:
             if (bits(machInst, 11, 10) == 0x0) { // op1=11x op2=00
                 return decodeSveFpRecipEstimateUnpred(machInst);
             }
@@ -7327,6 +7383,7 @@ namespace Aarch64
               case 0x3:
                 return decodeSveBinUnpredF<SveFtsmul>(
                         size, machInst, zd, zn, zm);
+
               case 0x6:
                 return decodeSveBinUnpredF<SveFrecps>(
                         size, machInst, zd, zn, zm);
