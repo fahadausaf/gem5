@@ -4919,32 +4919,63 @@ namespace Aarch64
         switch (op1) {
           case 0x4: // op1=100
             // SCVTF / UCVTF (bottom, unpredicated)
+            // SCVTFLT / UCVTFLT (top, unpredicated)
             switch (size) {
               case 0x1: // Zd.H, Zn.B
-                if (bits(machInst, 10) == 0x0) {
-                    return new SveScvtfBottomUnpred<uint8_t, uint16_t>(
-                        machInst, zd, zn);
+                if (bits(machInst, 11) == 0x0) {
+                    if (bits(machInst, 10) == 0x0) {
+                        return new SveScvtfBottomUnpred<uint8_t, uint16_t>(
+                            machInst, zd, zn);
+                    } else {
+                        return new SveUcvtfBottomUnpred<uint8_t, uint16_t>(
+                            machInst, zd, zn);
+                    }
                 } else {
-                    return new SveUcvtfBottomUnpred<uint8_t, uint16_t>(
-                        machInst, zd, zn);
+                    if (bits(machInst, 10) == 0x0) {
+                        return new SveScvtfltUnpred<uint8_t, uint16_t>(
+                            machInst, zd, zn);
+                    } else {
+                        return new SveUcvtfltUnpred<uint8_t, uint16_t>(
+                            machInst, zd, zn);
+                    }
                 }
 
               case 0x2: // Zd.S, Zn.H
-                if (bits(machInst, 10) == 0x0) {
-                    return new SveScvtfBottomUnpred<uint16_t, uint32_t>(
-                        machInst, zd, zn);
+                if (bits(machInst, 11) == 0x0) {
+                    if (bits(machInst, 10) == 0x0) {
+                        return new SveScvtfBottomUnpred<uint16_t, uint32_t>(
+                            machInst, zd, zn);
+                    } else {
+                        return new SveUcvtfBottomUnpred<uint16_t, uint32_t>(
+                            machInst, zd, zn);
+                    }
                 } else {
-                    return new SveUcvtfBottomUnpred<uint16_t, uint32_t>(
-                        machInst, zd, zn);
+                    if (bits(machInst, 10) == 0x0) {
+                        return new SveScvtfltUnpred<uint16_t, uint32_t>(
+                            machInst, zd, zn);
+                    } else {
+                        return new SveUcvtfltUnpred<uint16_t, uint32_t>(
+                            machInst, zd, zn);
+                    }
                 }
 
               case 0x3: // Zd.D, Zn.S
-                if (bits(machInst, 10) == 0x0) {
-                    return new SveScvtfBottomUnpred<uint32_t, uint64_t>(
-                        machInst, zd, zn);
+                if (bits(machInst, 11) == 0x0) {
+                    if (bits(machInst, 10) == 0x0) {
+                        return new SveScvtfBottomUnpred<uint32_t, uint64_t>(
+                            machInst, zd, zn);
+                    } else {
+                        return new SveUcvtfBottomUnpred<uint32_t, uint64_t>(
+                            machInst, zd, zn);
+                    }
                 } else {
-                    return new SveUcvtfBottomUnpred<uint32_t, uint64_t>(
-                        machInst, zd, zn);
+                    if (bits(machInst, 10) == 0x0) {
+                        return new SveScvtfltUnpred<uint32_t, uint64_t>(
+                            machInst, zd, zn);
+                    } else {
+                        return new SveUcvtfltUnpred<uint32_t, uint64_t>(
+                            machInst, zd, zn);
+                    }
                 }
             }
             break;

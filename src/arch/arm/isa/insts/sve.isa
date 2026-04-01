@@ -2102,6 +2102,45 @@ let {{
             exec_output += SveOpExecDeclare.subst(substDict)
 
 
+    def sveCvtTopUnpredInst(name, Name, opClass, sdtypes, op,
+                            decoder='Generic'):
+        global header_output, exec_output, decoders
+
+        code = sveEnabledCheckCode + '''
+        unsigned eCount = ArmStaticInst::getCurSveVecLen<DElement>(
+                xc->tcBase());
+
+        DPRINTF(Arm, "Executing ''' + Name + ''': eCount=%d\\n", eCount);
+
+        // Copy the odd/top half source elements first so Zd==Zn is safe.
+        ArmISA::VecRegContainer tmpVecC;
+        auto auxOp1 = tmpVecC.as<SElement>();
+        for (unsigned i = 0; i < eCount; ++i) {
+            auxOp1[i] = AA64FpOp1_xs[2 * i + 1];
+        }
+
+        for (unsigned i = 0; i < eCount; ++i) {
+            SElement srcElem1 = auxOp1[i];
+            DElement destElem = 0;
+    ''' + op + '''
+            AA64FpDest_xd[i] = destElem;
+        }
+
+        DPRINTF(Arm, "Finished ''' + Name + ''': eCount=%d\\n", eCount);
+        '''
+
+        iop = ArmInstObjParams(name, 'Sve' + Name, 'SveUnpackOp',
+                {'code': code, 'op_class': opClass}, [])
+        header_output += SveUnpackOpDeclare.subst(iop)
+        exec_output += SveWideningOpExecute.subst(iop)
+
+        for srcType, dstType in sdtypes:
+            substDict = {
+                'targs': srcType + ', ' + dstType,
+                'class_name': 'Sve' + Name
+            }
+            exec_output += SveOpExecDeclare.subst(substDict)
+
     # Generates definitions for unary SVE instructions (always constructive)
     def sveUnaryInst(name, Name, opClass, types, op, predType=PredType.NONE,
                      srcRegType=SrcRegType.Vector, decoder='Generic'):
@@ -7133,6 +7172,15 @@ let {{
         scvtfCode
     )
 
+    # SCVTFLT (top, unpredicated)
+    sveCvtTopUnpredInst(
+        'scvtflt', 'ScvtfltUnpred', 'SimdCvtOp',
+        [('uint8_t',  'uint16_t'),
+         ('uint16_t', 'uint32_t'),
+         ('uint32_t', 'uint64_t')],
+        scvtfCode
+    )
+
     # SDIV
     sdivCode = '''
         constexpr Element ELEM_MIN = std::numeric_limits<Element>::min();
@@ -8607,6 +8655,15 @@ let {{
     # UCVTF (bottom, unpredicated)
     sveCvtBottomUnpredInst(
         'ucvtf', 'UcvtfBottomUnpred', 'SimdCvtOp',
+        [('uint8_t',  'uint16_t'),
+         ('uint16_t', 'uint32_t'),
+         ('uint32_t', 'uint64_t')],
+        ucvtfCode
+    )
+
+    # UCVTFLT (top, unpredicated)
+    sveCvtTopUnpredInst(
+        'ucvtflt', 'UcvtfltUnpred', 'SimdCvtOp',
         [('uint8_t',  'uint16_t'),
          ('uint16_t', 'uint32_t'),
          ('uint32_t', 'uint64_t')],
