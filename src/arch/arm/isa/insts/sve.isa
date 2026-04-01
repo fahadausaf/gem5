@@ -8170,8 +8170,11 @@ let {{
             destElem = srcElem1;
         }
     '''
+    sveBinNarrowMultiInst('sqshrn', 'Sqshrn', 'SimdShiftOp', ('int16_t',),
+                          sqshrnCode, hasImm=True)
     sveBinNarrowInst('sqshrnb', 'Sqshrnb', 'SimdShiftOp',
                      smallSignedTypes, sqshrnCode, isImm=True)
+
     # SQSHRNT
     sveBinNarrowInst('sqshrnt', 'Sqshrnt', 'SimdShiftOp',
                      smallSignedTypes, sqshrnCode, isImm=True, uptTop=True)
@@ -9095,6 +9098,8 @@ let {{
                 destElem = srcElem1;
             }
     '''
+    sveBinNarrowMultiInst('uqshrn', 'Uqshrn', 'SimdShiftOp', ('uint16_t',),
+                          uqshrnCode, hasImm=True)
     sveBinNarrowInst('uqshrnb', 'Uqshrnb', 'SimdShiftOp',
                      smallUnsignedTypes, uqshrnCode, isImm=True)
     # UQSHRNT

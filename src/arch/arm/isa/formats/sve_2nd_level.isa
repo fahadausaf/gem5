@@ -4447,7 +4447,7 @@ namespace Aarch64
     {
         uint8_t tsize = (bits(machInst, 22) << 1) | bits(machInst, 20);
         uint8_t r = bits(machInst, 11);
-        if (tsize != 0x1 || r != 1) {
+        if (tsize != 0x1) {
             return new Unknown64(machInst);
         }
 
@@ -4458,17 +4458,34 @@ namespace Aarch64
 
         unsigned esize = 16;
         unsigned shiftAmt = esize - imm4;
+
         switch (op_u) {
-          case 0x0: // op=0 U=0
-            return new SveSqrshrun<int16_t>(
-                machInst, zd, zn, zn + 1, shiftAmt);
-          case 0x2: // op=1 U=0
-            return new SveSqrshrn<int16_t>(
-                machInst, zd, zn, zn + 1, shiftAmt);
-          case 0x3: // op=1 U=1
-            return new SveUqrshrn<uint16_t>(
-                machInst, zd, zn, zn + 1, shiftAmt);
+          case 0x0: // U=0
+            if (r == 0) {
+                return new SveSqshrn<int16_t>(
+                    machInst, zd, zn, zn + 1, shiftAmt);
+            } else {
+                return new SveSqrshrn<int16_t>(
+                    machInst, zd, zn, zn + 1, shiftAmt);
+            }
+
+          case 0x1: // U=1
+            if (r == 0) {
+                return new SveUqshrn<uint16_t>(
+                    machInst, zd, zn, zn + 1, shiftAmt);
+            } else {
+                return new SveUqrshrn<uint16_t>(
+                    machInst, zd, zn, zn + 1, shiftAmt);
+            }
+
+          case 0x2:
+            // Leave this for SQSHRUN/SQRSHRUN if you add/fix them later
+            return new Unknown64(machInst);
+
+          case 0x3:
+            return new Unknown64(machInst);
         }
+
         return new Unknown64(machInst);
     }  // decodeSme2MulvecShiftNarrow
 
