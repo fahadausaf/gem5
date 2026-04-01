@@ -3228,13 +3228,19 @@ namespace Aarch64
         switch (opc) {
           case 0x0:   // opc=00
             if (u == 1) {
+                // ADDP
                 return decodeSveBinDestrPredU<SveAddp>(
                         size, machInst, zdn, zm, pg);
+            } else {
+                // SUBP
+                return decodeSveBinDestrPredU<SveSubp>(
+                        size, machInst, zdn, zm, pg);
             }
-            break;
+
           case 0x2:   // opc=10
             return decodeSveBinDestrPred<SveSmaxp, SveUmaxp>(
                     size, u, machInst, zdn, zm, pg);
+
           case 0x3:   // opc=11
             return decodeSveBinDestrPred<SveSminp, SveUminp>(
                     size, u, machInst, zdn, zm, pg);

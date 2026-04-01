@@ -5253,6 +5253,8 @@ let {{
                      smallUnsignedTypes, addhnCode, uptTop = True)
     # ADDP
     sveBinPairInst('addp', 'Addp', 'SimdAddOp', unsignedTypes, addCode)
+    # SUBP
+    sveBinPairInst('subp', 'Subp', 'SimdAddOp', unsignedTypes, subCode)
     # ADDPL
     addvlCode = sveEnabledCheckCode + '''
         unsigned eCount = ArmStaticInst::getCurSveVecLen<uint%d_t>(
