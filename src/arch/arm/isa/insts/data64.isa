@@ -710,6 +710,93 @@ let {{
         decoder_output += DataXCondCompImmConstructor.subst(iop)
         exec_output += BasicExecute.subst(iop)
 
+    def buildCfltUnsignedImmInst(mnem, cmp_kind, unsigned_cmp):
+        global header_output, decoder_output, exec_output
+
+        code = '''
+            fault = checkCFLTEnabled(xc->tcBase(), machInst);
+            if (fault != NoFault)
+                return fault;
+
+            const uint16_t reason = bits(machInst, 15, 14);
+            const uint64_t uimm = imm;
+
+            bool cond = false;
+
+            if (intWidth == 32) {
+        '''
+
+        if unsigned_cmp:
+            code += '''
+                const uint32_t lhs = (uint32_t)Op164;
+                const uint32_t rhs = (uint32_t)uimm;
+            '''
+        else:
+            code += '''
+                const int32_t lhs = (int32_t)Op164;
+                const int32_t rhs = (int32_t)uimm;
+            '''
+
+        if cmp_kind == "lt":
+            code += '''
+                cond = (lhs < rhs);
+            '''
+        elif cmp_kind == "gt":
+            code += '''
+                cond = (lhs > rhs);
+            '''
+        else:
+            raise TypeError("cmp_kind must be 'lt' or 'gt'")
+
+        code += '''
+            } else {
+        '''
+
+        if unsigned_cmp:
+            code += '''
+                const uint64_t lhs = (uint64_t)Op164;
+                const uint64_t rhs = (uint64_t)uimm;
+            '''
+        else:
+            code += '''
+                const int64_t lhs = (int64_t)Op164;
+                const int64_t rhs = (int64_t)uimm;
+            '''
+
+        if cmp_kind == "lt":
+            code += '''
+                cond = (lhs < rhs);
+            '''
+        else:
+            code += '''
+                cond = (lhs > rhs);
+            '''
+
+        code += '''
+            }
+
+            if (cond) {
+                DPRINTF(Arm, "CFLT unsigned-imm matched: rt=%d uimm=%llu reason=%u\\n",
+                        (int)bits(machInst, 20, 16),
+                        (unsigned long long)uimm,
+                        (unsigned)reason);
+                return std::make_shared<ConditionalFault>(machInst, reason);
+            }
+
+            return NoFault;
+        '''
+
+        iop = ArmInstObjParams(
+            mnem,
+            mnem.capitalize() + "UnsignedImm64",
+            "DataXCondCompImmOp",
+            code
+        )
+
+        header_output += DataXCondCompImmDeclare.subst(iop)
+        decoder_output += DataXCondCompImmConstructor.subst(iop)
+        exec_output += BasicExecute.subst(iop)
+
     def condCompCode(flagType, op, imm):
         ccCode = createCcCode64(carryCode64[flagType], overflowCode64[flagType])
         opDecl = "[[maybe_unused]] uint64_t secOp = imm;"
@@ -728,6 +815,11 @@ let {{
 
     buildCfltSignedImmInst("cflteq", False)
     buildCfltSignedImmInst("cfltne", True)
+
+    buildCfltUnsignedImmInst("cflthi", "gt", True)   # higher  = unsigned >
+    buildCfltUnsignedImmInst("cfltlo", "lt", True)   # lower   = unsigned <
+    buildCfltUnsignedImmInst("cfltgt", "gt", False)  # greater = signed >
+    buildCfltUnsignedImmInst("cfltlt", "lt", False)  # less    = signed <
     
     buildDataXCondImmInst("ccmn", condCompCode("add", "+", True))
     buildDataXCondImmInst("ccmp", condCompCode("sub", "-", True))
