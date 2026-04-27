@@ -797,6 +797,89 @@ let {{
         decoder_output += DataXCondCompImmConstructor.subst(iop)
         exec_output += BasicExecute.subst(iop)
 
+    def buildCfltRegInst(mnem, is_ne):
+        global header_output, decoder_output, exec_output
+
+        code = '''
+            fault = checkCFLTEnabled(xc->tcBase(), machInst);
+            if (fault != NoFault)
+                return fault;
+
+            const uint16_t reason = bits(machInst, 15, 14);
+            bool cond = false;
+
+            if (intWidth == 32) {
+                const uint32_t lhs = (uint32_t)Op164;
+                const uint32_t rhs = (uint32_t)Op264;
+
+                DPRINTF(Arm,
+                        "CFLT reg exec: mnem=__MNEM__ width=32 rt=%d rm=%d lhs=%#x rhs=%#x reason=%u\\n",
+                        (int)bits(machInst, 4, 0),
+                        (int)bits(machInst, 20, 16),
+                        lhs, rhs, (unsigned)reason);
+        '''
+
+        if is_ne:
+            code += '''
+                cond = (lhs != rhs);
+            '''
+        else:
+            code += '''
+                cond = (lhs == rhs);
+            '''
+
+        code += '''
+                DPRINTF(Arm, "CFLT reg result: mnem=__MNEM__ cond=%d\\n", cond);
+            } else {
+                const uint64_t lhs = (uint64_t)Op164;
+                const uint64_t rhs = (uint64_t)Op264;
+
+                DPRINTF(Arm,
+                        "CFLT reg exec: mnem=__MNEM__ width=64 rt=%d rm=%d lhs=%#llx rhs=%#llx reason=%u\\n",
+                        (int)bits(machInst, 4, 0),
+                        (int)bits(machInst, 20, 16),
+                        (unsigned long long)lhs,
+                        (unsigned long long)rhs,
+                        (unsigned)reason);
+        '''
+
+        if is_ne:
+            code += '''
+                cond = (lhs != rhs);
+            '''
+        else:
+            code += '''
+                cond = (lhs == rhs);
+            '''
+
+        code += '''
+                DPRINTF(Arm, "CFLT reg result: mnem=__MNEM__ cond=%d\\n", cond);
+            }
+
+            if (cond) {
+                DPRINTF(Arm, "CFLT reg fault taken: mnem=__MNEM__ reason=%u\\n",
+                        (unsigned)reason);
+                return std::make_shared<ConditionalFault>(machInst, reason);
+            }
+
+            DPRINTF(Arm, "CFLT reg no-fault: mnem=__MNEM__\\n");
+            return NoFault;
+        '''
+
+        code = code.replace("__MNEM__", mnem)
+
+        iop = ArmInstObjParams(
+            mnem,
+            mnem.capitalize() + "Reg64",
+            "DataXCondCompRegOp",
+            code
+        )
+
+        header_output += DataXCondCompRegDeclare.subst(iop)
+        decoder_output += DataXCondCompRegConstructor.subst(iop)
+        exec_output += BasicExecute.subst(iop)
+
+
     def condCompCode(flagType, op, imm):
         ccCode = createCcCode64(carryCode64[flagType], overflowCode64[flagType])
         opDecl = "[[maybe_unused]] uint64_t secOp = imm;"
@@ -820,6 +903,9 @@ let {{
     buildCfltUnsignedImmInst("cfltlo", "lt", True)   # lower   = unsigned <
     buildCfltUnsignedImmInst("cfltgt", "gt", False)  # greater = signed >
     buildCfltUnsignedImmInst("cfltlt", "lt", False)  # less    = signed <
+
+    buildCfltRegInst("cflteq", False)
+    buildCfltRegInst("cfltne", True)
     
     buildDataXCondImmInst("ccmn", condCompCode("add", "+", True))
     buildDataXCondImmInst("ccmp", condCompCode("sub", "-", True))
