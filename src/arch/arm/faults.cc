@@ -290,6 +290,11 @@ template<> ArmFault::FaultVals ArmFaultVals<SoftwareBreakpoint>::vals(
     "Software Breakpoint",   0x000, 0x000, 0x200, 0x400, 0x600, MODE_SVC,
     0, 0, 0, 0, true, false, false,  ExceptionClass::SOFTWARE_BREAKPOINT
 );
+template<> ArmFault::FaultVals ArmFaultVals<ConditionalFault>::vals(
+    // Some dummy values (ConditionalFault is AArch64-only for prototype)
+    "Conditional Fault",     0x000, 0x000, 0x200, 0x400, 0x600, MODE_SVC,
+    0, 0, 0, 0, true, false, false,  ExceptionClass::UNKNOWN
+);
 template<> ArmFault::FaultVals ArmFaultVals<HardwareBreakpoint>::vals(
     "Hardware Breakpoint",   0x000, 0x000, 0x200, 0x400, 0x600, MODE_SVC,
     0, 0, 0, 0, true, false, false,  ExceptionClass::HW_BREAKPOINT
@@ -1591,6 +1596,35 @@ SoftwareBreakpoint::routeToHyp(ThreadContext *tc) const
            (EL2Enabled(tc) && fromEL <= EL1 && (hcr.tge || mdcr.tde));
 }
 
+bool
+ConditionalFault::routeToHyp(ThreadContext *tc) const
+{
+    const HCR hcr = tc->readMiscRegNoEffect(MISCREG_HCR_EL2);
+
+    return fromEL == EL2 ||
+           (EL2Enabled(tc) && fromEL <= EL1 && hcr.tge);
+}
+
+ExceptionClass
+ConditionalFault::ec(ThreadContext *tc) const
+{
+    /*
+     * FEAT_CFLT ESR_ELx.EC is not finalized in the Arm material.
+     * For now, keep this as UNKNOWN for prototype purposes.
+     */
+    return ExceptionClass::UNKNOWN;
+}
+
+uint32_t
+ConditionalFault::iss() const
+{
+    /*
+     * For CFLT<cc> (signed immediate), issRaw already carries the
+     * zero-extended reason field from imm2.
+     */
+    return issRaw & 0xFFFF;
+}
+
 ExceptionClass
 SoftwareBreakpoint::ec(ThreadContext *tc) const
 {
@@ -1780,6 +1814,7 @@ template class ArmFaultVals<PCAlignmentFault>;
 template class ArmFaultVals<SPAlignmentFault>;
 template class ArmFaultVals<SystemError>;
 template class ArmFaultVals<SoftwareBreakpoint>;
+template class ArmFaultVals<ConditionalFault>;
 template class ArmFaultVals<HardwareBreakpoint>;
 template class ArmFaultVals<Watchpoint>;
 template class ArmFaultVals<SoftwareStepFault>;

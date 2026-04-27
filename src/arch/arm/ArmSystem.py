@@ -107,6 +107,7 @@ class ArmExtension(ScopedEnum):
         "FEAT_EVT",
         # Armv8.6
         "FEAT_FGT",
+        "FEAT_CFLT",
         # Armv8.7
         "FEAT_HCX",
         "FEAT_XS",
@@ -217,6 +218,7 @@ class ArmDefaultRelease(Armv8):
         "FEAT_EVT",
         # Armv8.6
         "FEAT_FGT",
+        "FEAT_CFLT",
         # Armv8.7
         "FEAT_HCX",
         "FEAT_XS",

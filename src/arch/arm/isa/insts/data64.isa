@@ -41,6 +41,20 @@ let {{
     decoder_output = ""
     exec_output = ""
 
+    cfltHelper = '''
+    static inline Fault
+    checkCFLTEnabled(ThreadContext *tc, ExtMachInst machInst)
+    {
+        //if (!HaveExt(tc, ArmExtension::FEAT_CFLT)) {
+        //    return std::make_shared<UndefinedInstruction>(
+        //        machInst, false, "cflt", true);
+        //}
+
+        return NoFault;
+    }
+    '''
+    exec_output += cfltHelper
+
     def createCcCode64(carry, overflow):
         code = ""
         code += '''
@@ -617,6 +631,85 @@ let {{
     def buildDataXCondSelInst(mnem, code):
         buildDataXCompInst(mnem, "Sel", "", code)
 
+    def buildCfltSignedImmInst(mnem, is_ne):
+        global header_output, decoder_output, exec_output
+
+        code = '''
+            fault = checkCFLTEnabled(xc->tcBase(), machInst);
+            if (fault != NoFault)
+                return fault;
+
+            const uint16_t reason = bits(machInst, 15, 14);
+            const int64_t simm = sext<9>(imm);
+
+            bool cond = false;
+
+            if (intWidth == 32) {
+                const uint32_t lhs = (uint32_t)Op164;
+                const uint32_t rhs = (uint32_t)simm;
+        '''
+
+        if is_ne:
+            code += '''
+                cond = (lhs != rhs);
+            '''
+        else:
+            code += '''
+                cond = (lhs == rhs);
+            '''
+
+        code += '''
+            } else {
+                const uint64_t lhs = (uint64_t)Op164;
+                const uint64_t rhs = (uint64_t)simm;
+        '''
+
+        if is_ne:
+            code += '''
+                cond = (lhs != rhs);
+            '''
+        else:
+            code += '''
+                cond = (lhs == rhs);
+            '''
+
+        code += '''
+            }
+
+            if (cond) {
+        '''
+
+        if is_ne:
+            code += '''
+                DPRINTF(Arm, "CFLT matched: op=%d rt=%d simm=%lld reason=%u\\n",
+                        1, (int)bits(machInst, 20, 16),
+                        (long long)simm, (unsigned)reason);
+            '''
+        else:
+            code += '''
+                DPRINTF(Arm, "CFLT matched: op=%d rt=%d simm=%lld reason=%u\\n",
+                        0, (int)bits(machInst, 20, 16),
+                        (long long)simm, (unsigned)reason);
+            '''
+
+        code += '''
+                return std::make_shared<ConditionalFault>(machInst, reason);
+            }
+
+            return NoFault;
+        '''
+
+        iop = ArmInstObjParams(
+            mnem,
+            mnem.capitalize() + "SignedImm64",
+            "DataXCondCompImmOp",
+            code
+        )
+
+        header_output += DataXCondCompImmDeclare.subst(iop)
+        decoder_output += DataXCondCompImmConstructor.subst(iop)
+        exec_output += BasicExecute.subst(iop)
+
     def condCompCode(flagType, op, imm):
         ccCode = createCcCode64(carryCode64[flagType], overflowCode64[flagType])
         opDecl = "[[maybe_unused]] uint64_t secOp = imm;"
@@ -633,6 +726,9 @@ let {{
             }
         '''
 
+    buildCfltSignedImmInst("cflteq", False)
+    buildCfltSignedImmInst("cfltne", True)
+    
     buildDataXCondImmInst("ccmn", condCompCode("add", "+", True))
     buildDataXCondImmInst("ccmp", condCompCode("sub", "-", True))
     buildDataXCondRegInst("ccmn", condCompCode("add", "+", False))

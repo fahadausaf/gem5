@@ -671,6 +671,21 @@ class SoftwareBreakpoint : public ArmFaultVals<SoftwareBreakpoint>
     ExceptionClass ec(ThreadContext *tc) const override;
 };
 
+class ConditionalFault : public ArmFaultVals<ConditionalFault>
+{
+  public:
+    ConditionalFault(ExtMachInst mach_inst, uint32_t _iss)
+        : ArmFaultVals<ConditionalFault>(mach_inst, _iss)
+    {}
+
+    bool routeToHyp(ThreadContext *tc) const override;
+
+    /** Syndrome methods */
+    ExceptionClass ec(ThreadContext *tc) const override;
+    bool il(ThreadContext *tc) const override { return true; }
+    uint32_t iss() const override;
+};
+
 class HardwareBreakpoint : public ArmFaultVals<HardwareBreakpoint>
 {
   private:
@@ -767,6 +782,7 @@ template<> ArmFault::FaultVals ArmFaultVals<SPAlignmentFault>::vals;
 template<> ArmFault::FaultVals ArmFaultVals<SystemError>::vals;
 template<> ArmFault::FaultVals ArmFaultVals<SoftwareBreakpoint>::vals;
 template<> ArmFault::FaultVals ArmFaultVals<HardwareBreakpoint>::vals;
+template<> ArmFault::FaultVals ArmFaultVals<ConditionalFault>::vals;
 template<> ArmFault::FaultVals ArmFaultVals<Watchpoint>::vals;
 template<> ArmFault::FaultVals ArmFaultVals<SoftwareStepFault>::vals;
 template<> ArmFault::FaultVals ArmFaultVals<ArmSev>::vals;

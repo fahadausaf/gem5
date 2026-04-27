@@ -55,6 +55,17 @@ namespace Aarch64
 output decoder {{
 namespace Aarch64
 {
+    // Experimental/private encoding for FEAT_CFLT prototype.
+    // Replace when Arm publishes final encoding.
+    static inline bool
+    isExperimentalCfltSignedImm(ExtMachInst machInst)
+    {
+        // Prototype-only tag using bits that Arm has not finalized yet.
+        // This helper is intended to be used only inside the selected
+        // conditional-compare-immediate decode bucket.
+        return bits(machInst, 13, 10) == 0xf;
+    }
+
     StaticInstPtr
     decodeDataProcImm(ExtMachInst machInst)
     {
@@ -2185,6 +2196,22 @@ namespace Aarch64
     StaticInstPtr
     decodeCondCompare(ExtMachInst machInst)
     {
+        // Experimental/private encoding for FEAT_CFLT prototype.
+        // Replace when Arm publishes final encoding.
+        if (bits(machInst, 11) == 1 && isExperimentalCfltSignedImm(machInst)) {
+            RegIndex rt = makeZero((RegIndex)(uint32_t)bits(machInst, 20, 16));
+            uint64_t simm9_raw = bits(machInst, 8, 0);
+            bool op = bits(machInst, 9);
+
+            if (op == 0) {
+                return new CflteqSignedImm64(machInst, rt, simm9_raw,
+                                            COND_AL, 0);
+            } else {
+                return new CfltneSignedImm64(machInst, rt, simm9_raw,
+                                            COND_AL, 0);
+            }
+        }
+
         if ((bits(machInst, 4) == 1) ||
             (bits(machInst, 10) == 1) ||
             (bits(machInst, 29) == 0)) {
@@ -2197,6 +2224,7 @@ namespace Aarch64
         ConditionCode cond =
             (ConditionCode)(uint8_t)bits(machInst, 15, 12);
         uint8_t flags = bits(machInst, 3, 0);
+
         if (bits(machInst, 11) == 0) {
             if (bits(machInst, 30) == 0) {
                 return new CcmnReg64(machInst, rn, rm, cond, flags);
