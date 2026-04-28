@@ -995,6 +995,62 @@ let {{
         decoder_output += DataXCondCompRegConstructor.subst(iop)
         exec_output += BasicExecute.subst(iop)
 
+    def buildClfltRegInst(mnem, eltsize_bytes):
+        global header_output, decoder_output, exec_output
+
+        code = '''
+            fault = checkCFLTEnabled(xc->tcBase(), machInst);
+            if (fault != NoFault)
+                return fault;
+
+            const uint16_t reason = bits(machInst, 15, 14);
+            const uint64_t eltsize = ''' + str(eltsize_bytes) + ''';
+
+            bool cond = false;
+
+            if (intWidth == 32) {
+                const uint32_t value1 = (uint32_t)Op164;
+                const uint32_t value2 = (uint32_t)Op264;
+
+                // Overflow-safe form of:
+                //   value1 + eltsize > value2
+                cond = (value1 > value2) ||
+                       (eltsize > (uint64_t)((uint32_t)(value2 - value1)));
+            } else {
+                const uint64_t value1 = (uint64_t)Op164;
+                const uint64_t value2 = (uint64_t)Op264;
+
+                // Overflow-safe form of:
+                //   value1 + eltsize > value2
+                cond = (value1 > value2) ||
+                       (eltsize > (value2 - value1));
+            }
+
+            if (cond) {
+                DPRINTF(Arm,
+                        "CLFLT matched: rt=%d rm=%d eltsize=%llu reason=%u\\n",
+                        (int)bits(machInst, 4, 0),
+                        (int)bits(machInst, 20, 16),
+                        (unsigned long long)eltsize,
+                        (unsigned)reason);
+                return std::make_shared<ConditionalFault>(machInst, reason);
+            }
+
+            return NoFault;
+        '''
+
+        iop = ArmInstObjParams(
+            mnem,
+            mnem.capitalize() + "Reg64",
+            "DataXCondCompRegOp",
+            code
+        )
+
+        header_output += DataXCondCompRegDeclare.subst(iop)
+        decoder_output += DataXCondCompRegConstructor.subst(iop)
+        exec_output += BasicExecute.subst(iop)
+
+        
     def condCompCode(flagType, op, imm):
         ccCode = createCcCode64(carryCode64[flagType], overflowCode64[flagType])
         opDecl = "[[maybe_unused]] uint64_t secOp = imm;"
@@ -1026,6 +1082,11 @@ let {{
     buildCfltCmpRegInst("cfltlt", "lt", False)
     buildCfltCmpRegInst("cflthi", "gt", True)
     buildCfltCmpRegInst("cfltgt", "gt", False)
+
+    buildClfltRegInst("clflth", 2)
+    buildClfltRegInst("clfltw", 4)
+    buildClfltRegInst("clfltt", 8)
+    buildClfltRegInst("clfltp", 16)
     
     buildDataXCondImmInst("ccmn", condCompCode("add", "+", True))
     buildDataXCondImmInst("ccmp", condCompCode("sub", "-", True))
