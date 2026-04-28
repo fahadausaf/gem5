@@ -134,6 +134,30 @@ namespace Aarch64
               bits(machInst, 7, 5) == 0x0;
     }
 
+    static inline bool
+    isExperimentalTfltZ(ExtMachInst machInst)
+    {
+        // Experimental/private encoding for FEAT_CFLT prototype.
+        // Replace when Arm publishes final encoding.
+        //
+        // Private subspace inside the CBZ/CBNZ family:
+        //   bits[25]    = 0      -> CBZ/CBNZ side
+        //   bits[23:21] = 0b111  -> private tag
+        //   bits[20:16] = 0b00000
+        //   bits[13:5]  = 0
+        //   bits[15:14] = reason
+        //   bits[24]    = 0 => TFLTZ, 1 => TFLTNZ
+        //   bits[4:0]   = Rt
+        //
+        // This is prototype-only and may overlap with real CBZ/CBNZ encodings.
+        // Use only in dedicated test binaries.
+
+        return bits(machInst, 25) == 0 &&
+              bits(machInst, 23, 21) == 0x7 &&
+              bits(machInst, 20, 16) == 0x0 &&
+              bits(machInst, 13, 5) == 0x0;
+    }
+
     StaticInstPtr
     decodeDataProcImm(ExtMachInst machInst)
     {
@@ -296,24 +320,41 @@ namespace Aarch64
           }
           case 0x1:
           {
-            RegIndex rt = (RegIndex)(uint8_t)bits(machInst, 4, 0);
-            if (bits(machInst, 25) == 0) {
-                int64_t imm = sext<19>(bits(machInst, 23, 5)) << 2;
-                if (bits(machInst, 24) == 0)
-                    return new Cbz64(machInst, imm, rt);
-                else
-                    return new Cbnz64(machInst, imm, rt);
-            } else {
-                uint64_t bitmask = 0x1;
-                bitmask <<= bits(machInst, 23, 19);
-                int64_t imm = sext<14>(bits(machInst, 18, 5)) << 2;
-                if (bits(machInst, 31))
-                    bitmask <<= 32;
-                if (bits(machInst, 24) == 0)
-                    return new Tbz64(machInst, bitmask, imm, rt);
-                else
-                    return new Tbnz64(machInst, bitmask, imm, rt);
-            }
+              RegIndex rt = (RegIndex)(uint8_t)bits(machInst, 4, 0);
+
+              // Experimental/private encoding for FEAT_CFLT prototype.
+              // Replace when Arm publishes final encoding.
+              if (isExperimentalTfltZ(machInst)) {
+                  RegIndex rtzr = makeZero(rt);
+
+                  if (bits(machInst, 24) == 0) {
+                      // TFLTZ: fault if Rt == 0
+                      return new CflteqReg64(
+                          machInst, rtzr, int_reg::Zero, COND_AL, 0);
+                  } else {
+                      // TFLTNZ: fault if Rt != 0
+                      return new CfltneReg64(
+                          machInst, rtzr, int_reg::Zero, COND_AL, 0);
+                  }
+              }
+
+              if (bits(machInst, 25) == 0) {
+                  int64_t imm = sext<19>(bits(machInst, 23, 5)) << 2;
+                  if (bits(machInst, 24) == 0)
+                      return new Cbz64(machInst, imm, rt);
+                  else
+                      return new Cbnz64(machInst, imm, rt);
+              } else {
+                  uint64_t bitmask = 0x1;
+                  bitmask <<= bits(machInst, 23, 19);
+                  int64_t imm = sext<14>(bits(machInst, 18, 5)) << 2;
+                  if (bits(machInst, 31))
+                      bitmask <<= 32;
+                  if (bits(machInst, 24) == 0)
+                      return new Tbz64(machInst, bitmask, imm, rt);
+                  else
+                      return new Tbnz64(machInst, bitmask, imm, rt);
+              }
           }
           case 0x2:
             // bit 30:26=10101
