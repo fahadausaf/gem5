@@ -188,6 +188,24 @@ let {{
     decoder_output += BasicConstructor64.subst(unknown64Iop)
     exec_output += BasicExecute.subst(unknown64Iop)
 
+    def buildBtiObject(mnem, class_name):
+        global header_output, decoder_output, exec_output
+        # Branch Target Identification is encoded in the architectural HINT
+        # space. gem5 does not currently model guarded pages or PSTATE.BTYPE,
+        # so executing a landing-pad instruction has no architectural side
+        # effects in the simulator. Decode it explicitly instead of warning,
+        # preserving correct disassembly and HINT-as-NOP behaviour.
+        code = 'DPRINTF(ExecEnable, "Executing %s: %%#x\\n", machInst);' % mnem
+        bti_iop = ArmInstObjParams(mnem, class_name, "ArmStaticInst", code)
+        header_output += BasicDeclare.subst(bti_iop)
+        decoder_output += BasicConstructor64.subst(bti_iop)
+        exec_output += BasicExecute.subst(bti_iop)
+
+    buildBtiObject("bti", "Bti")
+    buildBtiObject("bti c", "BtiC")
+    buildBtiObject("bti j", "BtiJ")
+    buildBtiObject("bti jc", "BtiJc")
+
     isbIop = ArmInstObjParams("isb", "Isb64", "ArmStaticInst", "",
                               ['IsSquashAfter'])
     header_output += BasicDeclare.subst(isbIop)

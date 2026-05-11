@@ -384,10 +384,23 @@ namespace Aarch64
                             }
                             break;
                           case 0x4:
-                            switch (op2 & 0x1) {
+                            switch (op2) {
                               case 0x0:
-                                return new WarnUnimplemented(
-                                        "bti", machInst);
+                                DPRINTF(Decode, "Decoded bti: %#x\n",
+                                        machInst);
+                                return new Bti(machInst);
+                              case 0x2:
+                                DPRINTF(Decode, "Decoded bti c: %#x\n",
+                                        machInst);
+                                return new BtiC(machInst);
+                              case 0x4:
+                                DPRINTF(Decode, "Decoded bti j: %#x\n",
+                                        machInst);
+                                return new BtiJ(machInst);
+                              case 0x6:
+                                DPRINTF(Decode, "Decoded bti jc: %#x\n",
+                                        machInst);
+                                return new BtiJc(machInst);
                             }
                             break;
                         }
