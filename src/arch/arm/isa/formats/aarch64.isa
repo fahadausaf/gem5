@@ -234,6 +234,8 @@ namespace Aarch64
             } else {
                 // FEAT_CMPBR: CBB<cc> (compare bytes and branch)
                 // TODO: Gate FEAT_CMPBR when feature plumbing exists.
+                // Aliases CBBLT/CBBLE/CBBLO/CBBLS are assembler-only forms
+                // of the canonical encodings below with Rt/Rm swapped.
                 switch (bits(machInst, 23, 21)) {
                   case 0x0:
                     return new Cbbgt64(machInst, imm, rt, rm);

@@ -374,6 +374,20 @@ let {{
 
     # FEAT_CMPBR: CBB<cc> (compare bytes and branch)
     # TODO: Gate decode/execute on FEAT_CMPBR when feature plumbing exists.
+    #
+    # NOTE: Arm documents CBBLT/CBBLE/CBBLO/CBBLS as assembler aliases only.
+    # gem5 decodes machine code and disassembles canonical mnemonics, so these
+    # aliases intentionally reuse existing canonical encodings/semantics:
+    #   CBBLT Wa, Wb, label -> CBBGT Wb, Wa, label  (cc=000, Rt=Wb, Rm=Wa)
+    #   CBBLE Wa, Wb, label -> CBBGE Wb, Wa, label  (cc=001, Rt=Wb, Rm=Wa)
+    #   CBBLO Wa, Wb, label -> CBBHI Wb, Wa, label  (cc=010, Rt=Wb, Rm=Wa)
+    #   CBBLS Wa, Wb, label -> CBBHS Wb, Wa, label  (cc=011, Rt=Wb, Rm=Wa)
+    #
+    # Manual .inst vectors (imm9=0, branch target = PC):
+    #   .inst 0x74008001  // alias CBBLT w0,w1 <=> canonical cbbgt w1,w0
+    #   .inst 0x74208001  // alias CBBLE w0,w1 <=> canonical cbbge w1,w0
+    #   .inst 0x74408001  // alias CBBLO w0,w1 <=> canonical cbbhi w1,w0
+    #   .inst 0x74608001  // alias CBBLS w0,w1 <=> canonical cbbhs w1,w0
     for (mnem, cmp, signed_cmp) in (
             ("cbbgt", ">", "true"),
             ("cbbge", ">=", "true"),
