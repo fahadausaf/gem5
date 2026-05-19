@@ -190,6 +190,32 @@ class BranchImmReg64 : public ArmStaticInst
             Addr pc, const loader::SymbolTable *symtab) const override;
 };
 
+// Branch to a target computed with an immediate and two registers
+class BranchImmRegReg64 : public ArmStaticInst
+{
+  protected:
+    int64_t imm;
+    RegIndex op1;
+    RegIndex op2;
+
+  public:
+    BranchImmRegReg64(const char *mnem, ExtMachInst _machInst,
+                      OpClass __opClass, int64_t _imm, RegIndex _op1,
+                      RegIndex _op2) :
+        ArmStaticInst(mnem, _machInst, __opClass),
+        imm(_imm), op1(_op1), op2(_op2)
+    {}
+
+    std::unique_ptr<PCStateBase> branchTarget(
+            const PCStateBase &branch_pc) const override;
+
+    /// Explicitly import the otherwise hidden branchTarget
+    using StaticInst::branchTarget;
+
+    std::string generateDisassembly(
+            Addr pc, const loader::SymbolTable *symtab) const override;
+};
+
 // Branch to a target computed with two immediates
 class BranchImmImmReg64 : public ArmStaticInst
 {

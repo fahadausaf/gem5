@@ -158,6 +158,20 @@ class %(class_name)s : public %(base_class)s
 };
 }};
 
+def template BranchImmRegRegDeclare {{
+class %(class_name)s : public %(base_class)s
+{
+  private:
+    %(reg_idx_arr_decl)s;
+
+  public:
+    // Constructor
+    %(class_name)s(ExtMachInst machInst, int32_t imm, RegIndex _op1,
+                   RegIndex _op2);
+    Fault execute(ExecContext *, trace::InstRecord *) const override;
+};
+}};
+
 // Only used by CBNZ, CBZ which is conditional based on
 // a register value even though the instruction is always unconditional.
 def template BranchImmRegConstructor {{
@@ -168,6 +182,18 @@ def template BranchImmRegConstructor {{
         %(set_reg_idx_arr)s;
         %(constructor)s;
         flags[IsCondControl] = true;
+    }
+}};
+
+def template BranchImmRegRegConstructor {{
+    %(class_name)s::%(class_name)s(ExtMachInst machInst, int32_t _imm,
+                                   RegIndex _op1, RegIndex _op2) :
+        %(base_class)s("%(mnemonic)s", machInst, %(op_class)s, _imm, _op1, _op2)
+    {
+        %(set_reg_idx_arr)s;
+        %(constructor)s;
+        flags[IsCondControl] = true;
+        flags[IsDirectControl] = true;
     }
 }};
 

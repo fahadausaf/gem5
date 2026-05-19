@@ -330,4 +330,45 @@ let {{
         header_output += BranchImmImmReg64Declare.subst(iop)
         decoder_output += BranchImmImmReg64Constructor.subst(iop)
         exec_output += BasicExecute.subst(iop)
+
+    # FEAT_CMPBR: CB<cc> (register)
+    # TODO: Gate decode/execute on FEAT_CMPBR when feature plumbing exists.
+    for (mnem, cmp, signed_cmp) in (
+            ("cbgt", ">", "true"),
+            ("cbge", ">=", "true"),
+            ("cbhi", ">", "false"),
+            ("cbhs", ">=", "false"),
+            ("cbeq", "==", "false"),
+            ("cbne", "!=", "false")):
+        code = '''
+            bool taken = false;
+            if (%(signed_cmp)s) {
+                if (bits(machInst, 31)) {
+                    int64_t lhs = sext(Op164, 64);
+                    int64_t rhs = sext(Op264, 64);
+                    taken = lhs %(cmp)s rhs;
+                } else {
+                    int32_t lhs = sext(Op164, 32);
+                    int32_t rhs = sext(Op264, 32);
+                    taken = lhs %(cmp)s rhs;
+                }
+            } else if (bits(machInst, 31)) {
+                uint64_t lhs = Op164;
+                uint64_t rhs = Op264;
+                taken = lhs %(cmp)s rhs;
+            } else {
+                uint32_t lhs = bits(Op164, 31, 0);
+                uint32_t rhs = bits(Op264, 31, 0);
+                taken = lhs %(cmp)s rhs;
+            }
+            NPC = taken ? purifyTaggedAddr(RawPC + imm, xc->tcBase(),
+                        currEL(xc->tcBase()), true) : NPC;
+        ''' % {"cmp": cmp, "signed_cmp": signed_cmp}
+
+        iop = ArmInstObjParams(mnem, mnem.capitalize() + "64",
+                               "BranchImmRegReg64", code,
+                               ['IsCondControl', 'IsDirectControl'])
+        header_output += BranchImmRegRegDeclare.subst(iop)
+        decoder_output += BranchImmRegRegConstructor.subst(iop)
+        exec_output += BasicExecute.subst(iop)
 }};
