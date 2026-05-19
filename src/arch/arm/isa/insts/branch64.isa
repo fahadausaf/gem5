@@ -371,4 +371,32 @@ let {{
         header_output += BranchImmRegRegDeclare.subst(iop)
         decoder_output += BranchImmRegRegConstructor.subst(iop)
         exec_output += BasicExecute.subst(iop)
+
+    # FEAT_CMPBR: CBB<cc> (compare bytes and branch)
+    # TODO: Gate decode/execute on FEAT_CMPBR when feature plumbing exists.
+    for (mnem, cmp, signed_cmp) in (
+            ("cbbgt", ">", "true"),
+            ("cbbge", ">=", "true"),
+            ("cbbhi", ">", "false"),
+            ("cbbhs", ">=", "false"),
+            ("cbbeq", "==", "false"),
+            ("cbbne", "!=", "false")):
+        code = '''
+            int8_t lhs_s = sext<8>(bits(Op164, 7, 0));
+            int8_t rhs_s = sext<8>(bits(Op264, 7, 0));
+            uint8_t lhs_u = bits(Op164, 7, 0);
+            uint8_t rhs_u = bits(Op264, 7, 0);
+            bool taken = %(signed_cmp)s ?
+                (lhs_s %(cmp)s rhs_s) :
+                (lhs_u %(cmp)s rhs_u);
+            NPC = taken ? purifyTaggedAddr(RawPC + imm, xc->tcBase(),
+                        currEL(xc->tcBase()), true) : NPC;
+        ''' % {"cmp": cmp, "signed_cmp": signed_cmp}
+
+        iop = ArmInstObjParams(mnem, mnem.capitalize() + "64",
+                               "BranchImmRegReg64", code,
+                               ['IsCondControl', 'IsDirectControl'])
+        header_output += BranchImmRegRegDeclare.subst(iop)
+        decoder_output += BranchImmRegRegConstructor.subst(iop)
+        exec_output += BasicExecute.subst(iop)
 }};

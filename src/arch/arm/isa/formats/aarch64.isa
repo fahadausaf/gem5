@@ -207,26 +207,49 @@ namespace Aarch64
     StaticInstPtr
     decodeBranchExcSys(const Decoder &dec, ExtMachInst machInst)
     {
-        if (bits(machInst, 30, 24) == 0x74 && bits(machInst, 15, 14) == 0x0) {
-            // FEAT_CMPBR: CB<cc> (register)
+        if (bits(machInst, 30, 24) == 0x74 && bits(machInst, 14) == 0x0) {
             RegIndex rt = (RegIndex)(uint8_t)bits(machInst, 4, 0);
             RegIndex rm = (RegIndex)(uint8_t)bits(machInst, 20, 16);
             int64_t imm = sext<9>(bits(machInst, 13, 5)) << 2;
-            switch (bits(machInst, 23, 21)) {
-              case 0x0:
-                return new Cbgt64(machInst, imm, rt, rm);
-              case 0x1:
-                return new Cbge64(machInst, imm, rt, rm);
-              case 0x2:
-                return new Cbhi64(machInst, imm, rt, rm);
-              case 0x3:
-                return new Cbhs64(machInst, imm, rt, rm);
-              case 0x6:
-                return new Cbeq64(machInst, imm, rt, rm);
-              case 0x7:
-                return new Cbne64(machInst, imm, rt, rm);
-              default:
-                return new Unknown64(machInst);
+            
+            if (bits(machInst, 15) == 0x0) {
+                // FEAT_CMPBR: CB<cc> (register)
+                // TODO: Gate FEAT_CMPBR when feature plumbing exists.
+                switch (bits(machInst, 23, 21)) {
+                  case 0x0:
+                    return new Cbgt64(machInst, imm, rt, rm);
+                  case 0x1:
+                    return new Cbge64(machInst, imm, rt, rm);
+                  case 0x2:
+                    return new Cbhi64(machInst, imm, rt, rm);
+                  case 0x3:
+                    return new Cbhs64(machInst, imm, rt, rm);
+                  case 0x6:
+                    return new Cbeq64(machInst, imm, rt, rm);
+                  case 0x7:
+                    return new Cbne64(machInst, imm, rt, rm);
+                  default:
+                    return new Unknown64(machInst);
+                }
+            } else {
+                // FEAT_CMPBR: CBB<cc> (compare bytes and branch)
+                // TODO: Gate FEAT_CMPBR when feature plumbing exists.
+                switch (bits(machInst, 23, 21)) {
+                  case 0x0:
+                    return new Cbbgt64(machInst, imm, rt, rm);
+                  case 0x1:
+                    return new Cbbge64(machInst, imm, rt, rm);
+                  case 0x2:
+                    return new Cbbhi64(machInst, imm, rt, rm);
+                  case 0x3:
+                    return new Cbbhs64(machInst, imm, rt, rm);
+                  case 0x6:
+                    return new Cbbeq64(machInst, imm, rt, rm);
+                  case 0x7:
+                    return new Cbbne64(machInst, imm, rt, rm);
+                  default:
+                    return new Unknown64(machInst);
+                }
             }
         }
 
