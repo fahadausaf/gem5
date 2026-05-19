@@ -49,6 +49,7 @@ namespace Aarch64
     StaticInstPtr decodeSveMem(ExtMachInst machInst);
 
     StaticInstPtr decodeGem5Ops(ExtMachInst machInst);
+    
 }
 }};
 
