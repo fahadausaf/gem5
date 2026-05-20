@@ -243,6 +243,12 @@ namespace Aarch64
                     return new Unknown64(machInst);
                 // FEAT_CMPBR: CB<cc> (register)
                 // TODO: Gate FEAT_CMPBR when feature plumbing exists.
+                // Aliases CBLT/CBLE/CBLO/CBLS are assembler-only forms
+                // of the canonical encodings below with Rt/Rm swapped:
+                //   CBLT Wa, Wb, label => CBGT Wb, Wa, label (cc=000)
+                //   CBLE Wa, Wb, label => CBGE Wb, Wa, label (cc=001)
+                //   CBLO Wa, Wb, label => CBHI Wb, Wa, label (cc=010)
+                //   CBLS Wa, Wb, label => CBHS Wb, Wa, label (cc=011)
                 switch (bits(machInst, 23, 21)) {
                   case 0x0:
                     return new Cbgt64(machInst, imm, rt, rm);

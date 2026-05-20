@@ -374,6 +374,12 @@ let {{
     
     # FEAT_CMPBR: CB<cc> (register)
     # TODO: Gate decode/execute on FEAT_CMPBR when feature plumbing exists.
+    # NOTE: Arm documents CBLT/CBLE/CBLO/CBLS as assembler aliases only.
+    # They are canonical CB<cc> register encodings with Rt/Rm swapped:
+    #   CBLT Wa, Wb, label => CBGT Wb, Wa, label (cc=000)
+    #   CBLE Wa, Wb, label => CBGE Wb, Wa, label (cc=001)
+    #   CBLO Wa, Wb, label => CBHI Wb, Wa, label (cc=010)
+    #   CBLS Wa, Wb, label => CBHS Wb, Wa, label (cc=011)
     for (mnem, cmp, signed_cmp) in (
             ("cbgt", ">", "true"),
             ("cbge", ">=", "true"),
