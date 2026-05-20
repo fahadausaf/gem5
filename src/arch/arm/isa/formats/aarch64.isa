@@ -285,6 +285,11 @@ namespace Aarch64
                 // TODO: Gate FEAT_CMPBR when feature plumbing exists.
                 // Aliases CBHLT/CBHLE/CBHLO/CBHLS are assembler-only forms
                 // of the canonical encodings below with Rt/Rm swapped.
+                // of the canonical encodings below with Rt/Rm swapped:
+                //   CBHLT Wa, Wb, label => CBHGT Wb, Wa, label (cc=000)
+                //   CBHLE Wa, Wb, label => CBHGE Wb, Wa, label (cc=001)
+                //   CBHLO Wa, Wb, label => CBHHI Wb, Wa, label (cc=010)
+                //   CBHLS Wa, Wb, label => CBHHS Wb, Wa, label (cc=011)
                 switch (bits(machInst, 23, 21)) {
                   case 0x0:
                     return new Cbhgt64(machInst, imm, rt, rm);

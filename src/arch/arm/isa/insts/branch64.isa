@@ -418,6 +418,11 @@ let {{
     #
     # NOTE: Arm documents CBBLT/CBBLE/CBBLO/CBBLS and
     # CBHLT/CBHLE/CBHLO/CBHLS as assembler aliases only.
+    # CBH alias mapping (operand order is reversed in canonical form):
+    #   CBHLT Wa, Wb, label => CBHGT Wb, Wa, label (cc=000)
+    #   CBHLE Wa, Wb, label => CBHGE Wb, Wa, label (cc=001)
+    #   CBHLO Wa, Wb, label => CBHHI Wb, Wa, label (cc=010)
+    #   CBHLS Wa, Wb, label => CBHHS Wb, Wa, label (cc=011)
     for (mnem_prefix, compare_bits) in (("cbb", 8), ("cbh", 16)):
         for (mnem_suffix, cmp, signed_cmp) in (
                 ("gt", ">", "true"),
