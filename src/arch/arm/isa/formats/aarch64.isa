@@ -207,7 +207,33 @@ namespace Aarch64
     StaticInstPtr
     decodeBranchExcSys(const Decoder &dec, ExtMachInst machInst)
     {
-        if (bits(machInst, 30, 24) == 0x74) {
+        if (bits(machInst, 30, 24) == 0x75) {
+            RegIndex rt = (RegIndex)(uint8_t)bits(machInst, 4, 0);
+            int64_t imm = sext<9>(bits(machInst, 13, 5)) << 2;
+            uint64_t imm6 = bits(machInst, 20, 15);
+
+            if (bits(machInst, 14) != 0x0)
+                return new Unknown64(machInst);
+
+            // FEAT_CMPBR: CB<cc> (immediate)
+            // TODO: Gate FEAT_CMPBR when feature plumbing exists.
+            switch (bits(machInst, 23, 21)) {
+              case 0x0:
+                return new CbgtImm64(machInst, imm, rt, imm6);
+              case 0x1:
+                return new CbltImm64(machInst, imm, rt, imm6);
+              case 0x2:
+                return new CbhiImm64(machInst, imm, rt, imm6);
+              case 0x3:
+                return new CbloImm64(machInst, imm, rt, imm6);
+              case 0x6:
+                return new CbeqImm64(machInst, imm, rt, imm6);
+              case 0x7:
+                return new CbneImm64(machInst, imm, rt, imm6);
+              default:
+                return new Unknown64(machInst);
+            }
+        } else if (bits(machInst, 30, 24) == 0x74) {
             RegIndex rt = (RegIndex)(uint8_t)bits(machInst, 4, 0);
             RegIndex rm = (RegIndex)(uint8_t)bits(machInst, 20, 16);
             int64_t imm = sext<9>(bits(machInst, 13, 5)) << 2;

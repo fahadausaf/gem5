@@ -83,6 +83,16 @@ BranchImmImmReg64::branchTarget(const PCStateBase &branch_pc) const
     return std::unique_ptr<PCStateBase>{pcs};
 }
 
+std::unique_ptr<PCStateBase>
+BranchImmRegImm64::branchTarget(const PCStateBase &branch_pc) const
+{
+    PCStateBase *pcs = branch_pc.clone();
+    auto &apc = pcs->as<PCState>();
+    apc.instNPC(apc.pc() + imm);
+    apc.advance();
+    return std::unique_ptr<PCStateBase>{pcs};
+}
+
 std::string
 BranchImmCond64::generateDisassembly(
         Addr pc, const loader::SymbolTable *symtab) const
@@ -200,6 +210,18 @@ BranchImmImmReg64::generateDisassembly(
     printIntReg(ss, op1);
     ccprintf(ss, ", #%#x, ", imm1);
     printTarget(ss, pc + imm2, symtab);
+    return ss.str();
+}
+
+std::string
+BranchImmRegImm64::generateDisassembly(
+        Addr pc, const loader::SymbolTable *symtab) const
+{
+    std::stringstream ss;
+    printMnemonic(ss, "", false);
+    printIntReg(ss, op1);
+    ccprintf(ss, ", #%#x, ", imm64);
+    printTarget(ss, pc + imm, symtab);
     return ss.str();
 }
 

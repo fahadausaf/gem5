@@ -174,3 +174,30 @@ def template BranchImmImmReg64Constructor {{
         %(constructor)s;
     }
 }};
+
+def template BranchImmRegImm64Declare {{
+class %(class_name)s : public %(base_class)s
+{
+  private:
+    %(reg_idx_arr_decl)s;
+
+  public:
+    // Constructor
+    %(class_name)s(ExtMachInst machInst, int64_t _imm, RegIndex _op1,
+                   uint64_t _imm64);
+    Fault execute(ExecContext *, trace::InstRecord *) const override;
+};
+}};
+
+def template BranchImmRegImm64Constructor {{
+    %(class_name)s::%(class_name)s(ExtMachInst machInst, int64_t _imm,
+                                   RegIndex _op1, uint64_t _imm64) :
+        %(base_class)s("%(mnemonic)s", machInst, %(op_class)s,
+                       _imm, _op1, _imm64)
+    {
+        %(set_reg_idx_arr)s;
+        %(constructor)s;
+        flags[IsCondControl] = true;
+        flags[IsDirectControl] = true;
+    }
+}};
