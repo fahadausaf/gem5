@@ -207,12 +207,14 @@ namespace Aarch64
     StaticInstPtr
     decodeBranchExcSys(const Decoder &dec, ExtMachInst machInst)
     {
-        if (bits(machInst, 30, 24) == 0x74 && bits(machInst, 14) == 0x0) {
+        if (bits(machInst, 30, 24) == 0x74) {
             RegIndex rt = (RegIndex)(uint8_t)bits(machInst, 4, 0);
             RegIndex rm = (RegIndex)(uint8_t)bits(machInst, 20, 16);
             int64_t imm = sext<9>(bits(machInst, 13, 5)) << 2;
             
             if (bits(machInst, 15) == 0x0) {
+                if (bits(machInst, 14) != 0x0)
+                    return new Unknown64(machInst);
                 // FEAT_CMPBR: CB<cc> (register)
                 // TODO: Gate FEAT_CMPBR when feature plumbing exists.
                 switch (bits(machInst, 23, 21)) {
@@ -231,7 +233,7 @@ namespace Aarch64
                   default:
                     return new Unknown64(machInst);
                 }
-            } else {
+            } else if (bits(machInst, 14) == 0x0) {
                 // FEAT_CMPBR: CBB<cc> (compare bytes and branch)
                 // TODO: Gate FEAT_CMPBR when feature plumbing exists.
                 // Aliases CBBLT/CBBLE/CBBLO/CBBLS are assembler-only forms
@@ -249,6 +251,27 @@ namespace Aarch64
                     return new Cbbeq64(machInst, imm, rt, rm);
                   case 0x7:
                     return new Cbbne64(machInst, imm, rt, rm);
+                  default:
+                    return new Unknown64(machInst);
+                }
+              } else {
+                // FEAT_CMPBR: CBH<cc> (compare halfwords and branch)
+                // TODO: Gate FEAT_CMPBR when feature plumbing exists.
+                // Aliases CBHLT/CBHLE/CBHLO/CBHLS are assembler-only forms
+                // of the canonical encodings below with Rt/Rm swapped.
+                switch (bits(machInst, 23, 21)) {
+                  case 0x0:
+                    return new Cbhgt64(machInst, imm, rt, rm);
+                  case 0x1:
+                    return new Cbhge64(machInst, imm, rt, rm);
+                  case 0x2:
+                    return new Cbhhi64(machInst, imm, rt, rm);
+                  case 0x3:
+                    return new Cbhhs64(machInst, imm, rt, rm);
+                  case 0x6:
+                    return new Cbheq64(machInst, imm, rt, rm);
+                  case 0x7:
+                    return new Cbhne64(machInst, imm, rt, rm);
                   default:
                     return new Unknown64(machInst);
                 }
