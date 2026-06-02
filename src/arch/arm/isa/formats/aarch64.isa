@@ -129,21 +129,12 @@ namespace Aarch64
     static inline bool
     isExperimentalCfltCmpReg(ExtMachInst machInst)
     {
-        // TEMPORARILY DISABLED while isolating CFLT register-equality decode.
-        return false;
-
         // Experimental/private encoding for FEAT_CFLT prototype.
         // Replace when Arm publishes final encoding.
-
-        // Register-comparison form stays in the cond-compare register half.
-        // We choose a different private tag from CFLT register equality.
         //
-        // The previous prototype tag was too broad:
-        //   bits[13:12] == 0x2
-        //   bit8        == 0
-        //   bits[7:5]   == 0
-        //
-        // That collided with real Linux-kernel instructions during boot.
+        // Register-comparison form stays in the conditional-compare
+        // register half. The previous prototype tag was too broad and
+        // collided with real Linux-kernel instructions during boot.
         //
         // New prototype tag:
         //   bit11       == 0    -> register half
@@ -157,7 +148,6 @@ namespace Aarch64
         //   1 = LT
         //   2 = HI
         //   3 = GT
-
         return bits(machInst, 11) == 0 &&
               bits(machInst, 29) == 1 &&
               bits(machInst, 13, 12) == 0x2 &&
