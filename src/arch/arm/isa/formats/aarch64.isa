@@ -60,6 +60,9 @@ namespace Aarch64
     static inline bool
     isExperimentalCfltSignedImm(ExtMachInst machInst)
     {
+        // TEMPORARILY DISABLED while isolating CFLT register-equality decode.
+        return false;
+
         // Prototype-only tag using bits that Arm has not finalized yet.
         // This helper is intended to be used only inside the selected
         // conditional-compare-immediate decode bucket.
@@ -69,6 +72,9 @@ namespace Aarch64
     static inline bool
     isExperimentalCfltUnsignedImm(ExtMachInst machInst)
     {
+        // TEMPORARILY DISABLED while isolating CFLT register-equality decode.
+        return false;
+
         // Experimental/private encoding for FEAT_CFLT prototype.
         // Replace when Arm publishes final encoding.
         //
@@ -93,50 +99,78 @@ namespace Aarch64
         // Keep this inside the conditional-compare register bucket.
         // Choose a private tag pattern that does not collide with CCMP/CCMN.
         //
-        // Example prototype choice:
-        //   bit11 == 0   -> register bucket
-        //   bit29 == 1   -> same outer bucket constraint
-        //   bit10 == 0   -> same bucket constraint
-        //   bit13 == 1   -> private tag
-        //   bit12 == 1   -> private tag
-        //   bit7:5 == 0  -> fixed for prototype
+        // Prototype private tag for CFLT register equality/inequality.
         //
-        // Adjust this helper to match whatever private .inst encoding
-        // you decide to use.
+        // Keep this inside the conditional-compare register bucket, but make
+        // the tag narrower than the original version. The previous tag used
+        // only bits[13:12] == 0x3 and bits[7:5] == 0x0, which can collide with
+        // real Linux-kernel CCMP instructions during boot.
+        //
+        // New prototype tag:
+        //   bit11     == 0    -> register bucket
+        //   bit29     == 1    -> same outer bucket constraint
+        //   bit10     == 0    -> same bucket constraint
+        //   bits13:12 == 0x3  -> private tag
+        //   bit9      == 1    -> extra private tag bit
+        //   bits7:5   == 0x7  -> extra private tag bits
+        //
+        // bit8 remains the CFLT operation bit:
+        //   0 = EQ
+        //   1 = NE
 
         return bits(machInst, 11) == 0 &&
               bits(machInst, 29) == 1 &&
               bits(machInst, 10) == 0 &&
               bits(machInst, 13, 12) == 0x3 &&
-              bits(machInst, 7, 5) == 0x0;
+              bits(machInst, 9) == 1 &&
+              bits(machInst, 7, 5) == 0x7;
     }
 
     static inline bool
     isExperimentalCfltCmpReg(ExtMachInst machInst)
     {
+        // TEMPORARILY DISABLED while isolating CFLT register-equality decode.
+        return false;
+
         // Experimental/private encoding for FEAT_CFLT prototype.
         // Replace when Arm publishes final encoding.
 
         // Register-comparison form stays in the cond-compare register half.
-        // We choose a different private tag from 7.3.3.
+        // We choose a different private tag from CFLT register equality.
         //
-        // bit11 == 0  -> register half
-        // bit29 == 1  -> same outer bucket
-        // bit10:9     -> cc field
-        // bit8 == 0   -> fixed for this private form
-        // bit13:12 == 0b10 -> private tag for 7.3.4
-        // bit7:5 == 0 -> fixed
+        // The previous prototype tag was too broad:
+        //   bits[13:12] == 0x2
+        //   bit8        == 0
+        //   bits[7:5]   == 0
+        //
+        // That collided with real Linux-kernel instructions during boot.
+        //
+        // New prototype tag:
+        //   bit11       == 0    -> register half
+        //   bit29       == 1    -> same outer bucket
+        //   bits13:12   == 0x2  -> private cmp-reg tag
+        //   bit8        == 1    -> extra private tag bit
+        //   bits7:5     == 0x7  -> extra private tag bits
+        //
+        // bits10:9 remain the CFLT relational condition selector:
+        //   0 = LO
+        //   1 = LT
+        //   2 = HI
+        //   3 = GT
 
         return bits(machInst, 11) == 0 &&
               bits(machInst, 29) == 1 &&
               bits(machInst, 13, 12) == 0x2 &&
-              bits(machInst, 8) == 0 &&
-              bits(machInst, 7, 5) == 0x0;
+              bits(machInst, 8) == 1 &&
+              bits(machInst, 7, 5) == 0x7;
     }
 
     static inline bool
     isExperimentalTfltZ(ExtMachInst machInst)
     {
+        // TEMPORARILY DISABLED while isolating CFLT register-equality decode.
+        return false;
+
         // Experimental/private encoding for FEAT_CFLT prototype.
         // Replace when Arm publishes final encoding.
         //
@@ -161,6 +195,9 @@ namespace Aarch64
     static inline bool
     isExperimentalClfltReg(ExtMachInst machInst)
     {
+        // TEMPORARILY DISABLED while isolating CFLT register-equality decode.
+        return false;
+
         // Experimental/private encoding for FEAT_CFLT prototype.
         // Replace when Arm publishes final encoding.
         //
