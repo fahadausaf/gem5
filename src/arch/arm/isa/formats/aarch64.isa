@@ -2410,6 +2410,38 @@ namespace Aarch64
             }
         }
 
+        // Experimental/private encoding for FEAT_CFLT prototype.
+        //
+        // This must be checked before the normal conditional-compare
+        // Unknown64 guard below. The private CFLT compare-register encoding
+        // uses bits[10:9] as the relational selector:
+        //
+        //   0 = LO, unsigned <
+        //   1 = LT, signed <
+        //   2 = HI, unsigned >
+        //   3 = GT, signed >
+        //
+        // Therefore HI/GT intentionally have bit[10] == 1, which would
+        // otherwise be rejected by the normal CCMP/CCMN decoder guard.
+        if (isExperimentalCfltCmpReg(machInst)) {
+            RegIndex rt = makeZero((RegIndex)(uint32_t)bits(machInst, 4, 0));
+            RegIndex rm = makeZero((RegIndex)(uint32_t)bits(machInst, 20, 16));
+            uint8_t cc = bits(machInst, 10, 9);
+
+            switch (cc) {
+              case 0x0:
+                return new CfltloReg64(machInst, rt, rm, COND_AL, 0);
+              case 0x1:
+                return new CfltltReg64(machInst, rt, rm, COND_AL, 0);
+              case 0x2:
+                return new CflthiReg64(machInst, rt, rm, COND_AL, 0);
+              case 0x3:
+                return new CfltgtReg64(machInst, rt, rm, COND_AL, 0);
+              default:
+                GEM5_UNREACHABLE;
+            }
+        }
+
         if ((bits(machInst, 4) == 1) ||
             (bits(machInst, 10) == 1) ||
             (bits(machInst, 29) == 0)) {
@@ -2435,27 +2467,6 @@ namespace Aarch64
                     return new CflteqReg64(machInst, rt, rm, COND_AL, 0);
                 } else {
                     return new CfltneReg64(machInst, rt, rm, COND_AL, 0);
-                }
-            }
-
-            // Experimental/private encoding for FEAT_CFLT prototype.
-            // Replace when Arm publishes final encoding.
-            if (isExperimentalCfltCmpReg(machInst)) {
-                RegIndex rt = makeZero((RegIndex)(uint32_t)bits(machInst, 4, 0));
-                RegIndex rm = makeZero((RegIndex)(uint32_t)bits(machInst, 20, 16));
-                uint8_t cc = bits(machInst, 10, 9);
-
-                switch (cc) {
-                  case 0x0:
-                    return new CfltloReg64(machInst, rt, rm, COND_AL, 0);
-                  case 0x1:
-                    return new CfltltReg64(machInst, rt, rm, COND_AL, 0);
-                  case 0x2:
-                    return new CflthiReg64(machInst, rt, rm, COND_AL, 0);
-                  case 0x3:
-                    return new CfltgtReg64(machInst, rt, rm, COND_AL, 0);
-                  default:
-                    GEM5_UNREACHABLE;
                 }
             }
 
