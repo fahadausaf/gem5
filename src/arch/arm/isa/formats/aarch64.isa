@@ -185,31 +185,13 @@ namespace Aarch64
     static inline bool
     isExperimentalClfltReg(ExtMachInst machInst)
     {
-        // TEMPORARILY DISABLED while isolating CFLT register-equality decode.
+        // TEMPORARILY DISABLED: CLFLT prototype encoding still aliases
+        // real kernel instructions in FS mode.
+        //
+        // Smoke Test 21 proved the CLFLTW execution path works with an
+        // exact-match guard, but both broader prototype encodings tested so far
+        // affected Linux boot before the user-space runner executed.
         return false;
-
-        // Experimental/private encoding for FEAT_CFLT prototype.
-        // Replace when Arm publishes final encoding.
-        //
-        // Register half:
-        //   bit11 == 0
-        //
-        // Private CLFLT tag:
-        //   bits13:12 == 0b10
-        //   bit8      == 1
-        //
-        // Size selector:
-        //   bits7:5
-        //     000 -> H
-        //     001 -> W
-        //     010 -> T
-        //     011 -> P
-
-        return bits(machInst, 11) == 0 &&
-              bits(machInst, 29) == 1 &&
-              bits(machInst, 10) == 0 &&
-              bits(machInst, 13, 12) == 0x2 &&
-              bits(machInst, 8) == 1;
     }
 
     StaticInstPtr
