@@ -105,6 +105,7 @@ class O3_ARM_v7a_FUP(FUPool):
         O3_ARM_v7a_Load(),
         O3_ARM_v7a_Store(),
         O3_ARM_v7a_FP(),
+        PredALU(),
     ]
 
 
